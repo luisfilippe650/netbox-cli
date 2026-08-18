@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netbox-cli"
+version = "0.1.0"
+description = "Uma CLI simples para interagir com a API do NetBox"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+    "requests>=2.31",
+]
+
+[project.scripts]
+netbox = "netbox_cli.app:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
