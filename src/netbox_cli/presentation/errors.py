@@ -7,6 +7,7 @@ from rich.text import Text
 
 from netbox_cli.client import NetBoxClientError
 from netbox_cli.config import ConfigurationError
+from netbox_cli.exceptions import NetBoxCLIError
 
 
 def _validation_message(error: ValidationError) -> str:
@@ -38,6 +39,10 @@ def show_error(error: Exception, *, console: Console | None = None) -> None:
             hint = "Abra 'netbox' e faça login novamente."
         elif error.status_code == 404:
             hint = "Confira se o recurso ou ID informado existe."
+    elif isinstance(error, NetBoxCLIError):
+        title = "Operação não concluída"
+        message = str(error)
+        hint = "Revise os dados informados e tente novamente."
     else:
         message = str(error)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -13,6 +14,22 @@ from netbox_cli.presentation.errors import show_error
 from netbox_cli.presentation.output import OutputFormat, error_console, render
 
 ServiceT = TypeVar("ServiceT")
+
+
+class InputError(NetBoxCLIError):
+    """Entrada de linha de comando inválida."""
+
+
+def parse_json_object(value: str, *, option_name: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise InputError(
+            f"{option_name} deve conter JSON válido: {error.msg}"
+        ) from error
+    if not isinstance(parsed, dict):
+        raise InputError(f"{option_name} deve ser um objeto JSON")
+    return parsed
 
 
 def make_client() -> NetBoxClient:

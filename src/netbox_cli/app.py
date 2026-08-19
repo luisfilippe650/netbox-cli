@@ -1,5 +1,8 @@
 import typer
 
+from netbox_cli.cli.devices.device_types_cli import app as device_types_app
+from netbox_cli.cli.devices.devices_cli import app as devices_app
+from netbox_cli.cli.devices.manufacturers_cli import app as manufacturers_app
 from netbox_cli.cli.organization.locations_cli import app as locations_app
 from netbox_cli.cli.organization.regions_cli import app as regions_app
 from netbox_cli.cli.organization.sites_cli import app as sites_app
@@ -16,6 +19,9 @@ app.add_typer(sites_app, name="sites")
 app.add_typer(locations_app, name="locations")
 app.add_typer(rack_groups_app, name="rack-groups")
 app.add_typer(racks_app, name="racks")
+app.add_typer(manufacturers_app, name="manufacturers")
+app.add_typer(device_types_app, name="device-types")
+app.add_typer(devices_app, name="devices")
 
 
 @app.callback()

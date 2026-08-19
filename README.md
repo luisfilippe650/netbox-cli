@@ -2,7 +2,7 @@
 
 CLI para administrar organização e racks do NetBox por dois modos de uso:
 
-- `netbox`: terminal interativo com Rich;
+- `netbox`: interface Rich para login e configuração;
 - `netbox <recurso> <operação>`: comandos diretos com JSON, apropriados para scripts e agentes de IA.
 
 ## Instalação
@@ -10,29 +10,52 @@ CLI para administrar organização e racks do NetBox por dois modos de uso:
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-pip install -e '.[test]'
-cp .env.exemple .env
+pip install -e .
 ```
 
-Configure o `.env`:
+## Login e configuração
 
-```dotenv
-NETBOX_URL=http://localhost:8000
-NETBOX_TOKEN=seu_token_v1_ou_v2
-NETBOX_TIMEOUT=15
-```
-
-`NETBOX_URL` deve ser a raiz da instalação, sem `/api` no final.
-A CLI detecta tokens v2 iniciados por `nbt_` e usa autenticação Bearer;
-os demais tokens usam o esquema Token legado.
-
-## Terminal interativo
+O login existe somente no terminal interativo. Na primeira execução, use:
 
 ```bash
 netbox
 ```
 
-O menu solicita o recurso e a operação, confirma exclusões e apresenta os dados em tabelas Rich.
+A interface solicita usuário e senha do NetBox. A senha não é armazenada; o
+token retornado pela API é salvo em:
+
+```text
+~/.config/netbox-cli/config.yaml
+```
+
+O arquivo é criado automaticamente com permissão `0600` e este conteúdo
+inicial:
+
+```yaml
+url: http://localhost:8000
+token: ''
+timeout: 15
+```
+
+URL e timeout podem ser alterados diretamente nesse arquivo. Os comandos de
+linha direta reutilizam o token salvo pelo login visual.
+
+## Interface visual
+
+```bash
+netbox
+```
+
+A interface Rich é exclusiva para login e configuração. Nela é possível:
+
+- fazer ou refazer o login;
+- alterar a URL do NetBox;
+- alterar o timeout;
+- limpar o token armazenado.
+
+Use as setas `↑` e `↓` para navegar pelas escolhas e `Enter` para selecionar.
+As operações de regiões, sites, locais e racks são executadas somente pelos
+comandos de linha direta abaixo.
 
 ## Linha direta
 
@@ -94,6 +117,76 @@ netbox racks post \
 
 As larguras aceitas pelo NetBox são `10`, `19`, `21` e `23`. O status de um
 novo rack é sempre enviado como `active` e não aparece como opção da CLI.
+
+### Fabricantes
+
+```bash
+netbox manufacturers post --name "Dell" --comments "Fornecedor principal"
+netbox manufacturers all
+netbox manufacturers get 1
+netbox manufacturers delete 1
+```
+
+Somente o nome é obrigatório. O comentário pode ser omitido.
+
+### Tipos de dispositivos
+
+```bash
+netbox device-types post \
+  --manufacturer 1 \
+  --model "PowerEdge R650" \
+  --u-height 1
+
+netbox device-types all
+netbox device-types get 1
+netbox device-types delete 1
+```
+
+### Dispositivos
+
+```bash
+netbox devices post \
+  --name "srv01" \
+  --role 1 \
+  --device-type 1 \
+  --site 1
+
+netbox devices all
+netbox devices get 1
+netbox devices delete 1
+```
+
+Serial, local, rack e posição são opcionais:
+
+```bash
+netbox devices post \
+  --name "srv02" \
+  --role 1 \
+  --device-type 1 \
+  --site 1 \
+  --serial "ABC123" \
+  --location 2 \
+  --rack 3 \
+  --position 10
+```
+
+O status é enviado automaticamente como `active`. Quando uma posição é
+informada, o rack se torna obrigatório e a face é enviada como `front`.
+
+Campos personalizados são enviados como um objeto JSON:
+
+```bash
+netbox devices post \
+  --name "srv03" \
+  --role 1 \
+  --device-type 1 \
+  --site 1 \
+  --custom-fields '{"patrimonio":"PAT-001","monitorado":true}'
+```
+
+Antes do cadastro, a CLI consulta os campos personalizados aplicáveis a
+`dcim.device`. Se algum estiver marcado como obrigatório e não aparecer no JSON,
+o comando é interrompido e informa os campos ausentes.
 
 A saída direta é JSON por padrão. Para apresentação humana em tabela:
 

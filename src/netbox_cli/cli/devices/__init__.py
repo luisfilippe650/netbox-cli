@@ -1,0 +1,1 @@
+"""Comandos relacionados a dispositivos."""
