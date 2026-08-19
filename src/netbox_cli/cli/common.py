@@ -7,15 +7,16 @@ import typer
 from pydantic import ValidationError
 
 from netbox_cli.client.netbox_client import NetBoxClient
-from netbox_cli.config import ConfigurationError, Settings
+from netbox_cli.config import ConfigurationError, ConfigStore
 from netbox_cli.exceptions import NetBoxCLIError
+from netbox_cli.presentation.errors import show_error
 from netbox_cli.presentation.output import OutputFormat, error_console, render
 
 ServiceT = TypeVar("ServiceT")
 
 
 def make_client() -> NetBoxClient:
-    settings = Settings.from_env()
+    settings = ConfigStore().load(require_token=True)
     return NetBoxClient(
         base_url=settings.netbox_url,
         token=settings.netbox_token,
@@ -36,6 +37,6 @@ def execute(
     try:
         result = operation()
     except (ConfigurationError, NetBoxCLIError, ValidationError) as error:
-        error_console.print(f"[red]Erro:[/red] {error}")
+        show_error(error, console=error_console)
         raise typer.Exit(code=1) from error
     render(result, output, title=title)

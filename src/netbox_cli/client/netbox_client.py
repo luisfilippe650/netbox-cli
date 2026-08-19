@@ -10,31 +10,42 @@ from netbox_cli.exceptions import NetBoxCLIError
 class NetBoxClientError(NetBoxCLIError):
     """Erro ao comunicar com a API do NetBox."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _format_http_detail(detail: Any) -> str:
+    if isinstance(detail, dict):
+        if "detail" in detail:
+            return str(detail["detail"])
+        parts = []
+        for field, messages in detail.items():
+            if isinstance(messages, list):
+                messages = ", ".join(str(message) for message in messages)
+            parts.append(f"{field}: {messages}")
+        return "\n".join(parts)
+    return str(detail).strip()
+
 
 class NetBoxClient:
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: str = "",
         timeout: float = 15,
     ) -> None:
         if not base_url:
             raise ValueError("A URL do NetBox é obrigatória")
 
-        if not token:
-            raise ValueError("O token do NetBox é obrigatório")
-
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
         self.session = requests.Session()
-        auth_scheme = "Bearer" if token.startswith("nbt_") else "Token"
-        self.session.headers.update(
-            {
-                "Authorization": f"{auth_scheme} {token}",
-                "Accept": "application/json",
-            }
-        )
+        self.session.headers.update({"Accept": "application/json"})
+        if token:
+            auth_scheme = "Bearer" if token.startswith("nbt_") else "Token"
+            self.session.headers["Authorization"] = f"{auth_scheme} {token}"
 
     def request(
         self,
@@ -74,7 +85,9 @@ class NetBoxClient:
                     detail = response.text
 
                 raise NetBoxClientError(
-                    f"Erro {response.status_code} retornado pelo NetBox: {detail}"
+                    f"NetBox respondeu com HTTP {response.status_code}.\n"
+                    f"{_format_http_detail(detail)}",
+                    status_code=response.status_code,
                 ) from error
 
             raise NetBoxClientError("O NetBox retornou um erro HTTP") from error

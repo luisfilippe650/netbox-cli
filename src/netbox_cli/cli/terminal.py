@@ -1,164 +1,141 @@
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import replace
 
 import typer
-from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, IntPrompt, Prompt
+from rich.prompt import FloatPrompt, Prompt
 
-from netbox_cli.cli.common import make_client
-from netbox_cli.config import ConfigurationError
+from netbox_cli.cli.login import login_interactively
+from netbox_cli.config import ConfigStore, ConfigurationError, Settings
 from netbox_cli.exceptions import NetBoxCLIError
-from netbox_cli.presentation.output import render_table
-from netbox_cli.schemas.organization import AddLocation, AddRegion, AddSite
-from netbox_cli.schemas.racks import AddRack, AddRackGroup, UpdateRack, UpdateRackGroup
-from netbox_cli.service.organization import (
-    LocationsService,
-    RegionsService,
-    SitesService,
-)
-from netbox_cli.service.racks import RackGroupsService, RacksService
+from netbox_cli.presentation.errors import show_error
+from netbox_cli.presentation.menu import ChoiceMenu, MenuOption
 
 console = Console()
+menu = ChoiceMenu(console)
+
+MAIN_OPTIONS = [
+    MenuOption("login", "Login"),
+    MenuOption("settings", "Configurações"),
+    MenuOption("quit", "Sair"),
+]
+
+CONFIG_OPTIONS = [
+    MenuOption("url", "Alterar URL"),
+    MenuOption("timeout", "Alterar timeout"),
+    MenuOption("logout", "Limpar token / sair da conta"),
+    MenuOption("back", "Voltar"),
+]
 
 
-def _optional_id(label: str) -> int | None:
-    value = Prompt.ask(label, default="").strip()
-    return int(value) if value else None
+def _success(message: str) -> None:
+    console.print(Panel.fit(message, border_style="green"))
 
 
-def _create(resource: str, service: Any) -> None:
-    name = Prompt.ask("Nome").strip()
-
-    if resource == "rack-groups":
-        item = AddRackGroup(name=name)
-    elif resource == "racks":
-        item = AddRack(
-            site=IntPrompt.ask("ID do site"),
-            name=name,
-            width=int(
-                Prompt.ask("Largura", choices=["10", "19", "21", "23"], default="19")
-            ),
-            starting_unit=IntPrompt.ask("Unidade inicial", default=1),
-            u_height=IntPrompt.ask("Altura U", default=42),
-            group=_optional_id("ID do grupo (opcional)"),
-            role=_optional_id("ID da função (opcional)"),
-            rack_type=_optional_id("ID do tipo (opcional)"),
-        )
-    elif resource == "regions":
-        description = Prompt.ask("Descrição", default="")
-        item = AddRegion(name=name, description=description)
-    elif resource == "sites":
-        description = Prompt.ask("Descrição", default="")
-        item = AddSite(
-            name=name,
-            region=_optional_id("ID da região (opcional)"),
-            description=description,
-        )
-    else:
-        description = Prompt.ask("Descrição", default="")
-        item = AddLocation(
-            name=name,
-            site=IntPrompt.ask("ID do site"),
-            parent=_optional_id("ID do local pai (opcional)"),
-            description=description,
-        )
-
-    render_table(service.create(item), title="Criado com sucesso")
-
-
-def _update_rack_resource(resource: str, service: Any) -> None:
-    item_id = IntPrompt.ask("ID")
-    if resource == "rack-groups":
-        item = UpdateRackGroup(name=Prompt.ask("Novo nome").strip())
-    else:
-        name = Prompt.ask("Novo nome (opcional)", default="").strip() or None
-        item = UpdateRack(
-            site=_optional_id("Novo ID do site (opcional)"),
-            name=name,
-            width=_optional_id("Nova largura (opcional: 10, 19, 21 ou 23)"),
-            starting_unit=_optional_id("Nova unidade inicial (opcional)"),
-            u_height=_optional_id("Nova altura U (opcional)"),
-            group=_optional_id("Novo ID do grupo (opcional)"),
-            role=_optional_id("Novo ID da função (opcional)"),
-            rack_type=_optional_id("Novo ID do tipo (opcional)"),
-        )
-    render_table(service.update(item_id, item), title="Atualizado com sucesso")
-
-
-def _run_action(resource: str, service: Any) -> None:
-    is_rack_resource = resource in {"rack-groups", "racks"}
-    action = Prompt.ask(
-        "Operação",
-        choices=(
-            ["all", "get", "post", "update", "delete", "back"]
-            if is_rack_resource
-            else ["list", "view", "post", "delete", "back"]
-        ),
-        default="all" if is_rack_resource else "list",
+def _header(settings: Settings, store: ConfigStore) -> None:
+    auth_status = (
+        "[bold green]Token configurado[/bold green]"
+        if settings.token
+        else "[bold yellow]Login necessário[/bold yellow]"
     )
-    if action == "back":
-        return
-    if action in {"list", "all"}:
-        search = Prompt.ask("Busca (opcional)", default="").strip() or None
-        render_table(service.list(search=search), title=resource.capitalize())
-    elif action in {"view", "get"}:
-        item_id = IntPrompt.ask("ID")
-        render_table(service.get(item_id), title=resource.capitalize())
-    elif action == "post":
-        _create(resource, service)
-    elif action == "update":
-        _update_rack_resource(resource, service)
-    else:
-        item_id = IntPrompt.ask("ID")
-        if Confirm.ask(f"Excluir o item {item_id}?", default=False):
-            service.delete(item_id)
-            console.print("[green]Item excluído com sucesso.[/green]")
-
-
-def run_terminal() -> None:
-    """Executa o menu Rich que reutiliza os mesmos serviços do CLI direto."""
-    try:
-        client = make_client()
-        services = {
-            "regions": RegionsService(client),
-            "sites": SitesService(client),
-            "locations": LocationsService(client),
-            "rack-groups": RackGroupsService(client),
-            "racks": RacksService(client),
-        }
-    except ConfigurationError as error:
-        console.print(f"[red]Erro de configuração:[/red] {error}")
-        raise typer.Exit(code=1) from error
-
     console.print(
         Panel.fit(
-            "[bold cyan]NetBox CLI[/bold cyan]\nOrganização e racks",
+            "[bold cyan]NetBox CLI[/bold cyan]\n"
+            f"{auth_status}\n"
+            f"[dim]{settings.url} • timeout {settings.timeout}s[/dim]\n"
+            f"[dim]{store.path}[/dim]",
             border_style="cyan",
         )
     )
+
+
+def _change_url(store: ConfigStore, settings: Settings) -> None:
+    url = Prompt.ask("URL do NetBox", default=settings.url).strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise ConfigurationError("A URL deve começar com http:// ou https://")
+
+    token = settings.token if url == settings.url else ""
+    store.save(replace(settings, url=url, token=token))
+    message = "URL atualizada."
+    if settings.token and not token:
+        message += " O token foi limpo; faça login no novo servidor."
+    _success(message)
+
+
+def _change_timeout(store: ConfigStore, settings: Settings) -> None:
+    timeout = FloatPrompt.ask("Timeout em segundos", default=settings.timeout)
+    if timeout <= 0:
+        raise ConfigurationError("O timeout deve ser maior que zero")
+    parsed_timeout = float(timeout)
+    normalized = int(parsed_timeout) if parsed_timeout.is_integer() else parsed_timeout
+    store.save(replace(settings, timeout=normalized))
+    _success("Timeout atualizado.")
+
+
+def _clear_token(store: ConfigStore, settings: Settings) -> None:
+    if not settings.token:
+        console.print("[yellow]Nenhum token está armazenado.[/yellow]")
+        return
+    confirmation = menu.ask(
+        "Limpar o token armazenado?",
+        [MenuOption("yes", "Sim"), MenuOption("no", "Não")],
+        selected=1,
+    )
+    if confirmation == "yes":
+        store.save(replace(settings, token=""))
+        _success("Token removido. A sessão local foi encerrada.")
+
+
+def _configuration_menu(store: ConfigStore) -> None:
     while True:
-        try:
-            resource = Prompt.ask(
-                "Recurso",
-                choices=[
-                    "regions",
-                    "sites",
-                    "locations",
-                    "rack-groups",
-                    "racks",
-                    "quit",
-                ],
-                default="regions",
+        settings = store.load()
+        console.print(
+            Panel.fit(
+                f"[bold]Configurações[/bold]\n"
+                f"URL: [cyan]{settings.url}[/cyan]\n"
+                f"Timeout: [cyan]{settings.timeout}s[/cyan]\n"
+                f"Token: {'[green]configurado[/green]' if settings.token else '[yellow]vazio[/yellow]'}",
+                border_style="blue",
             )
-            if resource == "quit":
-                break
-            _run_action(resource, services[resource])
-        except (NetBoxCLIError, ValidationError, ValueError) as error:
-            console.print(f"[red]Erro:[/red] {error}")
-        except (EOFError, KeyboardInterrupt):
-            console.print("\nAté logo!")
-            break
-    client.close()
+        )
+        action = menu.ask("O que deseja configurar?", CONFIG_OPTIONS)
+        if action == "back":
+            return
+        try:
+            if action == "url":
+                _change_url(store, settings)
+            elif action == "timeout":
+                _change_timeout(store, settings)
+            else:
+                _clear_token(store, settings)
+        except (ConfigurationError, ValueError) as error:
+            show_error(error, console=console)
+
+
+def run_terminal() -> None:
+    """Interface Rich exclusiva para login e configuração."""
+    store = ConfigStore()
+    try:
+        store.ensure_exists()
+        while True:
+            settings = store.load()
+            _header(settings, store)
+            action = menu.ask("Escolha uma opção", MAIN_OPTIONS)
+            if action == "quit":
+                console.print("[cyan]Até logo![/cyan]")
+                return
+            if action == "settings":
+                _configuration_menu(store)
+                continue
+            try:
+                login_interactively(store, settings)
+            except typer.Exit:
+                continue
+    except (ConfigurationError, NetBoxCLIError, ValueError) as error:
+        show_error(error, console=console)
+        raise typer.Exit(code=1) from error
+    except (EOFError, KeyboardInterrupt) as error:
+        console.print("\n[cyan]Até logo![/cyan]")
+        raise typer.Exit(code=0) from error
