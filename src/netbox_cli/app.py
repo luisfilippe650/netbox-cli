@@ -3,6 +3,8 @@ import typer
 from netbox_cli.cli.organization.locations_cli import app as locations_app
 from netbox_cli.cli.organization.regions_cli import app as regions_app
 from netbox_cli.cli.organization.sites_cli import app as sites_app
+from netbox_cli.cli.racks.rack_groups_cli import app as rack_groups_app
+from netbox_cli.cli.racks.racks_cli import app as racks_app
 from netbox_cli.cli.terminal import run_terminal
 
 app = typer.Typer(
@@ -12,6 +14,8 @@ app = typer.Typer(
 app.add_typer(regions_app, name="regions")
 app.add_typer(sites_app, name="sites")
 app.add_typer(locations_app, name="locations")
+app.add_typer(rack_groups_app, name="rack-groups")
+app.add_typer(racks_app, name="racks")
 
 
 @app.callback()

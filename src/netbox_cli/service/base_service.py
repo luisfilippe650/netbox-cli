@@ -19,13 +19,15 @@ def slugify(value: str) -> str:
 
 class CRUDService(Generic[CreateModel]):
     ENDPOINT = ""
+    USES_SLUG = True
 
     def __init__(self, client: NetBoxClient) -> None:
         self.client = client
 
     def build_payload(self, item: CreateModel) -> dict[str, Any]:
         payload = item.model_dump(exclude_none=True)
-        payload["slug"] = payload.get("slug") or slugify(payload["name"])
+        if self.USES_SLUG and "name" in payload:
+            payload["slug"] = payload.get("slug") or slugify(payload["name"])
         return payload
 
     def create(self, item: CreateModel) -> dict[str, Any]:
@@ -43,6 +45,9 @@ class CRUDService(Generic[CreateModel]):
 
     def get(self, item_id: int) -> dict[str, Any]:
         return self.client.get(f"{self.ENDPOINT}{item_id}/")
+
+    def update(self, item_id: int, item: BaseModel) -> dict[str, Any]:
+        return self.client.patch(f"{self.ENDPOINT}{item_id}/", self.build_payload(item))
 
     def delete(self, item_id: int) -> None:
         self.client.delete(f"{self.ENDPOINT}{item_id}/")

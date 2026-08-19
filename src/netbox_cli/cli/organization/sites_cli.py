@@ -14,7 +14,9 @@ def post_site(
     name: Annotated[str, typer.Option("--name", "-n")],
     slug: Annotated[str | None, typer.Option()] = None,
     status: Annotated[str, typer.Option()] = "active",
-    region: Annotated[int | None, typer.Option("--region", help="ID da região.", min=1)] = None,
+    region: Annotated[
+        int | None, typer.Option("--region", help="ID da região.", min=1)
+    ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
@@ -44,7 +46,9 @@ def view_site(
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Exibe um site pelo ID."""
-    execute(lambda: make_service(SitesService).get(site_id), output=output, title="Site")
+    execute(
+        lambda: make_service(SitesService).get(site_id), output=output, title="Site"
+    )
 
 
 @app.command("list")

@@ -15,7 +15,9 @@ def post_location(
     site: Annotated[int, typer.Option("--site", help="ID do site.", min=1)],
     slug: Annotated[str | None, typer.Option()] = None,
     status: Annotated[str, typer.Option()] = "active",
-    parent: Annotated[int | None, typer.Option("--parent", help="ID do local pai.", min=1)] = None,
+    parent: Annotated[
+        int | None, typer.Option("--parent", help="ID do local pai.", min=1)
+    ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:

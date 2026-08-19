@@ -34,14 +34,33 @@ def render_json(data: Any) -> None:
 
 
 def render_table(data: Any, *, title: str) -> None:
-    rows = data.get("results", []) if isinstance(data, dict) and "results" in data else [data]
+    rows = (
+        data.get("results", [])
+        if isinstance(data, dict) and "results" in data
+        else [data]
+    )
     rows = [row for row in rows if isinstance(row, dict)]
 
     if not rows:
         console.print(f"[yellow]Nenhum {title.lower()} encontrado.[/yellow]")
         return
 
-    preferred = ("id", "name", "slug", "status", "region", "site", "parent", "description")
+    preferred = (
+        "id",
+        "name",
+        "slug",
+        "status",
+        "site",
+        "group",
+        "role",
+        "rack_type",
+        "width",
+        "starting_unit",
+        "u_height",
+        "region",
+        "parent",
+        "description",
+    )
     columns = [column for column in preferred if any(column in row for row in rows)]
     if not columns:
         columns = list(rows[0])[:8]

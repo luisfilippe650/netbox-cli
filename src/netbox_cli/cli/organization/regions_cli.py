@@ -12,7 +12,9 @@ app = typer.Typer(help="Gerencia regiões do NetBox.", no_args_is_help=True)
 
 def post_region(
     name: Annotated[str, typer.Option("--name", "-n", help="Nome da região.")],
-    slug: Annotated[str | None, typer.Option(help="Slug; gerado pelo nome quando omitido.")] = None,
+    slug: Annotated[
+        str | None, typer.Option(help="Slug; gerado pelo nome quando omitido.")
+    ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
@@ -35,7 +37,11 @@ def view_region(
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Exibe uma região pelo ID."""
-    execute(lambda: make_service(RegionsService).get(region_id), output=output, title="Região")
+    execute(
+        lambda: make_service(RegionsService).get(region_id),
+        output=output,
+        title="Região",
+    )
 
 
 @app.command("list")
