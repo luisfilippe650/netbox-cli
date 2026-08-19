@@ -5,17 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "netbox-cli"
 version = "0.1.0"
-description = "Uma CLI simples para interagir com a API do NetBox"
+description = "CLI interativa e automatizável para o NetBox"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "typer>=0.12",
-    "rich>=13",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
     "requests>=2.31",
+    "rich>=13",
+    "typer>=0.12",
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
 
 [project.scripts]
 netbox = "netbox_cli.app:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
