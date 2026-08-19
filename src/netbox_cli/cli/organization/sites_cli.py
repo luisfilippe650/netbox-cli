@@ -2,7 +2,8 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute, make_service
+from netbox_cli.cli.common import execute, execute_operation, make_service
+from netbox_cli.presentation.details import DetailOutputFormat, render_site_status
 from netbox_cli.presentation.output import OutputFormat
 from netbox_cli.schemas.organization.sites_dto import AddSite
 from netbox_cli.service.organization.sites_service import SitesService
@@ -77,3 +78,15 @@ def delete_site(
         return {"deleted": True, "resource": "site", "id": site_id}
 
     execute(operation, output=output, title="Site removido")
+
+
+@app.command("status")
+def site_status(
+    name: Annotated[str, typer.Argument(help="Nome exato do site.")],
+    output: Annotated[
+        DetailOutputFormat, typer.Option("--output", "-o")
+    ] = DetailOutputFormat.human,
+) -> None:
+    """Resume racks, dispositivos, capacidade e fabricantes de um site."""
+    result = execute_operation(lambda: make_service(SitesService).status(name))
+    render_site_status(result, output)

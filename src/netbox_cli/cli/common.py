@@ -57,3 +57,12 @@ def execute(
         show_error(error, console=error_console)
         raise typer.Exit(code=1) from error
     render(result, output, title=title)
+
+
+def execute_operation(operation: Callable[[], Any]) -> Any:
+    """Executa uma operação com o tratamento de erros comum da CLI."""
+    try:
+        return operation()
+    except (ConfigurationError, NetBoxCLIError, ValidationError) as error:
+        show_error(error, console=error_console)
+        raise typer.Exit(code=1) from error

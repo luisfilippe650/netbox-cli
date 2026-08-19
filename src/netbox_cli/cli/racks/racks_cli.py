@@ -2,7 +2,13 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute, make_service
+from netbox_cli.cli.common import execute, execute_operation, make_service
+from netbox_cli.presentation.details import (
+    DetailOutputFormat,
+    render_availability,
+    render_capacity,
+    render_rack,
+)
 from netbox_cli.presentation.output import OutputFormat
 from netbox_cli.schemas.racks import AddRack, UpdateRack
 from netbox_cli.service.racks import RacksService
@@ -117,3 +123,72 @@ def delete_rack(
         return {"deleted": True, "resource": "rack", "id": rack_id}
 
     execute(operation, output=output, title="Rack removido")
+
+
+@app.command("show")
+def show_rack(
+    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    site: Annotated[str | None, typer.Option("--site")] = None,
+    location: Annotated[str | None, typer.Option("--location")] = None,
+    face: Annotated[
+        str, typer.Option("--face", help="Face do rack: front ou rear.")
+    ] = "front",
+    output: Annotated[
+        DetailOutputFormat, typer.Option("--output", "-o")
+    ] = DetailOutputFormat.human,
+) -> None:
+    """Desenha a elevação de um rack."""
+    if face not in {"front", "rear"}:
+        raise typer.BadParameter("use 'front' ou 'rear'", param_hint="--face")
+    result = execute_operation(
+        lambda: make_service(RacksService).elevation(
+            name, face=face, site_name=site, location_name=location
+        )
+    )
+    render_rack(result, output)
+
+
+@app.command("available")
+def available_rack_positions(
+    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    height: Annotated[float, typer.Option("--height", min=0.5)],
+    site: Annotated[str | None, typer.Option("--site")] = None,
+    location: Annotated[str | None, typer.Option("--location")] = None,
+    face: Annotated[
+        str, typer.Option("--face", help="Face do rack: front ou rear.")
+    ] = "front",
+    output: Annotated[
+        DetailOutputFormat, typer.Option("--output", "-o")
+    ] = DetailOutputFormat.human,
+) -> None:
+    """Lista posições contíguas disponíveis para um equipamento."""
+    if face not in {"front", "rear"}:
+        raise typer.BadParameter("use 'front' ou 'rear'", param_hint="--face")
+    result = execute_operation(
+        lambda: make_service(RacksService).available(
+            name,
+            height=height,
+            face=face,
+            site_name=site,
+            location_name=location,
+        )
+    )
+    render_availability(result, output)
+
+
+@app.command("capacity")
+def rack_capacity(
+    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    site: Annotated[str | None, typer.Option("--site")] = None,
+    location: Annotated[str | None, typer.Option("--location")] = None,
+    output: Annotated[
+        DetailOutputFormat, typer.Option("--output", "-o")
+    ] = DetailOutputFormat.human,
+) -> None:
+    """Mostra capacidade e ocupação física do rack por face."""
+    result = execute_operation(
+        lambda: make_service(RacksService).capacity(
+            name, site_name=site, location_name=location
+        )
+    )
+    render_capacity(result, output)

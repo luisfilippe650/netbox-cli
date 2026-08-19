@@ -1,0 +1,666 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from netbox_cli.client import NetBoxClientError
+from typer.testing import CliRunner
+
+from netbox_cli.app import app
+from netbox_cli.exceptions import NetBoxCLIError
+from netbox_cli.presentation.details import (
+    DetailOutputFormat,
+    InventoryOutputFormat,
+    render_inventory,
+    render_rack,
+)
+from netbox_cli.service.devices.devices_service import DevicesService
+from netbox_cli.service.infrastructure_service import InfrastructureService
+from netbox_cli.service.inventory_service import InventoryFilterError, InventoryService
+from netbox_cli.service.lookup import ResourceNotFoundError, get_by_name, get_scoped_rack
+from netbox_cli.service.organization.sites_service import SitesService
+from netbox_cli.service.racks.racks_service import RacksService
+from netbox_cli.service.search_service import SearchService
+from netbox_cli.service.status_service import StatusService
+
+
+class FakeClient:
+    def __init__(self, responses: list[Any]) -> None:
+        self.responses = iter(responses)
+        self.calls: list[tuple[str, str, Any]] = []
+
+    def get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
+        self.calls.append(("GET", endpoint, params))
+        response = next(self.responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    def patch(self, endpoint: str, data: dict[str, Any]) -> Any:
+        self.calls.append(("PATCH", endpoint, data))
+        return next(self.responses)
+
+
+def page(*items: dict[str, Any]) -> dict[str, Any]:
+    return {"count": len(items), "results": list(items)}
+
+
+def test_inspect_combines_device_interfaces_and_ips() -> None:
+    client = FakeClient(
+        [
+            page(
+                {
+                    "id": 7,
+                    "name": "Server-01",
+                    "site": {"name": "CPTEC"},
+                    "location": {"name": "Datacenter"},
+                    "rack": {"name": "RACK-04"},
+                    "position": "20.0",
+                    "status": {"value": "active", "label": "Active"},
+                }
+            ),
+            page(
+                {
+                    "name": "eth0",
+                    "connected_endpoints": [
+                        {"name": "Gi0/12", "device": {"name": "Switch-01"}}
+                    ],
+                },
+                {"name": "ilo", "connected_endpoints": None},
+            ),
+            page(
+                {
+                    "address": "10.10.0.23/24",
+                    "assigned_object": {"name": "eth0"},
+                }
+            ),
+        ]
+    )
+
+    result = DevicesService(client).inspect("server-01")  # type: ignore[arg-type]
+
+    assert result["name"] == "Server-01"
+    assert result["interfaces"][0]["name"] == "eth0"
+    assert result["interfaces"][0]["connected_device"] == "Switch-01"
+    assert result["interfaces"][0]["connected_interface"] == "Gi0/12"
+    assert result["ip_addresses"] == [
+        {"interface": "eth0", "address": "10.10.0.23/24"}
+    ]
+    assert client.calls[1][2] == {"device_id": 7, "limit": 0}
+
+
+def test_inspect_reports_unknown_device() -> None:
+    client = FakeClient([page(), page()])
+    with pytest.raises(ResourceNotFoundError, match="não encontrado"):
+        DevicesService(client).inspect("missing")  # type: ignore[arg-type]
+
+
+def test_move_resolves_names_and_updates_location_context() -> None:
+    client = FakeClient(
+        [
+            page({"id": 7, "name": "Server-01"}),
+            page(
+                {
+                    "id": 4,
+                    "name": "RACK-02",
+                    "site": {"id": 1},
+                    "location": {"id": 3},
+                }
+            ),
+            {"id": 7, "name": "Server-01"},
+        ]
+    )
+
+    result = DevicesService(client).move(  # type: ignore[arg-type]
+        "Server-01", rack_name="RACK-02", position=15
+    )
+
+    assert result["moved"] is True
+    assert client.calls[-1] == (
+        "PATCH",
+        "/api/dcim/devices/7/",
+        {"rack": 4, "position": 15, "face": "front", "site": 1, "location": 3},
+    )
+
+
+def test_allocate_refuses_to_move_device_already_in_a_rack() -> None:
+    client = FakeClient(
+        [
+            page(
+                {
+                    "id": 7,
+                    "name": "Server-01",
+                    "rack": {"id": 4, "name": "RACK-04"},
+                }
+            )
+        ]
+    )
+
+    with pytest.raises(NetBoxCLIError, match="já está alocado em 'RACK-04'"):
+        DevicesService(client).allocate(  # type: ignore[arg-type]
+            "Server-01", rack_name="RACK-02", position=15
+        )
+
+    assert all(method != "PATCH" for method, _, _ in client.calls)
+
+
+def test_allocate_places_an_unallocated_device_without_a_second_lookup() -> None:
+    client = FakeClient(
+        [
+            page({"id": 7, "name": "Server-01", "rack": None}),
+            page(
+                {
+                    "id": 4,
+                    "name": "RACK-02",
+                    "site": {"id": 1},
+                    "location": {"id": 3},
+                }
+            ),
+            {"id": 7, "name": "Server-01"},
+        ]
+    )
+
+    result = DevicesService(client).allocate(  # type: ignore[arg-type]
+        "Server-01", rack_name="RACK-02", position=15
+    )
+
+    assert result["allocated"] is True
+    assert [method for method, _, _ in client.calls] == ["GET", "GET", "PATCH"]
+
+
+def test_rack_elevation_requests_all_units() -> None:
+    client = FakeClient(
+        [
+            page({"id": 4, "name": "RACK-04", "u_height": 42}),
+            page({"id": "42.0", "device": None}),
+        ]
+    )
+
+    result = RacksService(client).elevation("RACK-04")  # type: ignore[arg-type]
+
+    assert result["u_height"] == 42
+    assert client.calls[-1] == (
+        "GET",
+        "/api/dcim/racks/4/elevation/",
+        {"face": "front", "limit": 0},
+    )
+
+
+def test_general_search_normalizes_devices() -> None:
+    client = FakeClient(
+        [
+            page(
+                {
+                    "id": 7,
+                    "name": "Server-01",
+                    "rack": {"name": "RACK-04"},
+                    "site": {"name": "CPTEC"},
+                    "status": {"label": "Active"},
+                    "primary_ip4": {"address": "10.10.0.23/24"},
+                }
+            ),
+            page(),
+            page(),
+            page(),
+            page(),
+        ]
+    )
+
+    result = SearchService(client).search("server-01")  # type: ignore[arg-type]
+
+    assert result["count"] == 1
+    assert result["results"][0] == {
+        "type": "device",
+        "id": 7,
+        "name": "Server-01",
+        "rack": "RACK-04",
+        "site": "CPTEC",
+        "status": "Active",
+        "ip": "10.10.0.23/24",
+    }
+    assert len(client.calls) == 5
+
+
+def test_available_positions_require_contiguous_free_units() -> None:
+    client = FakeClient(
+        [
+            page(
+                {
+                    "id": 4,
+                    "name": "RACK-04",
+                    "u_height": 4,
+                    "starting_unit": 1,
+                }
+            ),
+            page(
+                {"id": "1.0", "occupied": False},
+                {"id": "1.5", "occupied": False},
+                {"id": "2.0", "occupied": True},
+                {"id": "2.5", "occupied": True},
+                {"id": "3.0", "occupied": False},
+                {"id": "3.5", "occupied": False},
+                {"id": "4.0", "occupied": False},
+                {"id": "4.5", "occupied": False},
+            ),
+        ]
+    )
+
+    result = RacksService(client).available(  # type: ignore[arg-type]
+        "RACK-04", height=2
+    )
+
+    assert result["positions"] == [3.0]
+    assert result["count"] == 1
+
+
+def test_inventory_resolves_site_and_normalizes_devices() -> None:
+    client = FakeClient(
+        [
+            page({"id": 1, "name": "CPTEC"}),
+            page(
+                {
+                    "id": 7,
+                    "name": "Server-01",
+                    "role": {"name": "Server"},
+                    "device_type": {"display": "PowerEdge"},
+                    "site": {"name": "CPTEC"},
+                    "rack": {"name": "RACK-04"},
+                    "position": "20.0",
+                    "status": {"label": "Active"},
+                    "primary_ip4": {"address": "10.10.0.23/24"},
+                }
+            ),
+        ]
+    )
+
+    result = InventoryService(client).inventory(  # type: ignore[arg-type]
+        site_name="CPTEC"
+    )
+
+    assert result["count"] == 1
+    assert result["results"][0]["primary_ip"] == "10.10.0.23/24"
+    assert client.calls[-1][2] == {"site_id": 1, "limit": 0}
+
+
+def test_inventory_requires_exactly_one_filter() -> None:
+    client = FakeClient([])
+    with pytest.raises(InventoryFilterError, match="--site ou --rack"):
+        InventoryService(client).inventory()  # type: ignore[arg-type]
+
+
+def test_trace_normalizes_cable_path() -> None:
+    client = FakeClient(
+        [
+            page({"id": 7, "name": "Server-01"}),
+            page({"id": 10, "name": "eth0", "device": {"name": "Server-01"}}),
+            [
+                [
+                    [
+                        {
+                            "id": 10,
+                            "name": "eth0",
+                            "device": {"name": "Server-01"},
+                        }
+                    ],
+                    {
+                        "id": 20,
+                        "label": "CAB-20",
+                        "status": {"label": "Connected"},
+                    },
+                    [
+                        {
+                            "id": 30,
+                            "name": "Gi0/12",
+                            "device": {"name": "Switch-01"},
+                        }
+                    ],
+                ]
+            ],
+        ]
+    )
+
+    result = DevicesService(client).trace(  # type: ignore[arg-type]
+        "Server-01", "eth0"
+    )
+
+    assert result["connected"] is True
+    assert result["segments"][0]["far"][0]["device"] == "Switch-01"
+    assert result["segments"][0]["far"][0]["name"] == "Gi0/12"
+    assert result["segments"][0]["cable"]["label"] == "CAB-20"
+
+
+def test_inventory_csv_has_stable_header(capsys: pytest.CaptureFixture[str]) -> None:
+    render_inventory(
+        {
+            "filter": {"type": "rack", "value": "RACK-04"},
+            "results": [{"id": 7, "name": "Server-01", "rack": "RACK-04"}],
+        },
+        InventoryOutputFormat.csv,
+    )
+
+    csv_output = capsys.readouterr().out
+    assert csv_output.startswith("id,name,role,device_type,site,location,rack,")
+    assert "7,Server-01" in csv_output
+
+
+def test_status_distinguishes_reachable_url_from_invalid_token() -> None:
+    client = FakeClient(
+        [NetBoxClientError("Invalid token", status_code=403)]
+    )
+
+    result = StatusService(  # type: ignore[arg-type]
+        client, url="http://localhost:8000", token_configured=True
+    ).check()
+
+    assert result["reachable"] is True
+    assert result["authenticated"] is False
+    assert result["status_code"] == 403
+
+
+def test_status_reports_authenticated_user() -> None:
+    client = FakeClient([{"username": "admin"}])
+
+    result = StatusService(  # type: ignore[arg-type]
+        client, url="http://localhost:8000", token_configured=True
+    ).check()
+
+    assert result["reachable"] is True
+    assert result["authenticated"] is True
+    assert result["user"] == "admin"
+
+
+def test_rack_capacity_consolidates_front_and_rear_units() -> None:
+    client = FakeClient(
+        [
+            page({"id": 4, "name": "RACK-04", "u_height": 4}),
+            page(
+                {"id": "1.0", "occupied": True},
+                {"id": "1.5", "occupied": True},
+            ),
+            page(
+                {"id": "1.0", "occupied": True},
+                {"id": "2.0", "occupied": True},
+                {"id": "2.5", "occupied": True},
+            ),
+        ]
+    )
+
+    result = RacksService(client).capacity("RACK-04")  # type: ignore[arg-type]
+
+    assert result["total_u"] == 4
+    assert result["occupied_u"] == 2
+    assert result["free_u"] == 2
+    assert result["occupancy_percent"] == 50
+    assert result["front"]["occupied_u"] == 1
+    assert result["rear"]["occupied_u"] == 1.5
+
+
+def test_site_status_aggregates_capacity_and_manufacturers() -> None:
+    client = FakeClient(
+        [
+            page({"id": 1, "name": "CPTEC", "status": {"label": "Active"}}),
+            page({"id": 4, "name": "RACK-04", "u_height": 2}),
+            page(
+                {
+                    "id": 7,
+                    "name": "Server-01",
+                    "rack": {"id": 4},
+                    "position": "1.0",
+                    "face": {"value": "front"},
+                    "device_type": {
+                        "id": 13,
+                        "manufacturer": {"name": "Dell"},
+                    },
+                },
+                {
+                    "id": 8,
+                    "name": "Server-02",
+                    "rack": None,
+                    "position": None,
+                    "device_type": {
+                        "id": 13,
+                        "manufacturer": {"name": "Dell"},
+                    },
+                },
+            ),
+            page({"id": 13, "u_height": "1.0", "is_full_depth": False}),
+            page(),
+        ]
+    )
+
+    result = SitesService(client).status("CPTEC")  # type: ignore[arg-type]
+
+    assert result["racks"] == 1
+    assert result["devices"] == 2
+    assert result["capacity"]["free_u"] == 1
+    assert result["capacity"]["occupancy_percent"] == 50
+    assert result["manufacturers"] == [{"name": "Dell", "devices": 2}]
+    assert len(client.calls) == 5
+
+
+def test_infrastructure_tree_nests_device_under_rack() -> None:
+    client = FakeClient(
+        [
+            page({"id": 1, "name": "Sudeste", "parent": None}),
+            page({"id": 2, "name": "CPTEC", "region": {"id": 1}}),
+            page(
+                {
+                    "id": 3,
+                    "name": "Datacenter",
+                    "site": {"id": 2},
+                    "parent": None,
+                }
+            ),
+            page(
+                {
+                    "id": 4,
+                    "name": "RACK-04",
+                    "site": {"id": 2},
+                    "location": {"id": 3},
+                }
+            ),
+            page(
+                {
+                    "id": 5,
+                    "name": "Server-01",
+                    "site": {"id": 2},
+                    "location": {"id": 3},
+                    "rack": {"id": 4},
+                    "position": "20.0",
+                }
+            ),
+        ]
+    )
+
+    result = InfrastructureService(client).tree()  # type: ignore[arg-type]
+
+    region = result["children"][0]
+    site = region["children"][0]
+    location = site["children"][0]
+    rack = location["children"][0]
+    assert [region["name"], site["name"], location["name"], rack["name"]] == [
+        "Sudeste",
+        "CPTEC",
+        "Datacenter",
+        "RACK-04",
+    ]
+    assert rack["children"][0]["name"] == "Server-01"
+
+
+def test_device_deallocate_clears_only_rack_fields() -> None:
+    client = FakeClient(
+        [
+            page(
+                {
+                    "id": 7,
+                    "name": "Server-01",
+                    "rack": {"name": "RACK-04"},
+                    "position": "20.0",
+                }
+            ),
+            {"id": 7, "name": "Server-01"},
+        ]
+    )
+
+    result = DevicesService(client).deallocate("Server-01")  # type: ignore[arg-type]
+
+    assert result["deallocated"] is True
+    assert result["previous_rack"] == "RACK-04"
+    assert client.calls[-1] == (
+        "PATCH",
+        "/api/dcim/devices/7/",
+        {"rack": None, "position": None, "face": None},
+    )
+
+
+def test_name_lookup_falls_back_to_search_for_case_insensitive_match() -> None:
+    client = FakeClient([page(), page({"id": 4, "name": "teste2"})])
+
+    result = get_by_name(  # type: ignore[arg-type]
+        client, "/api/dcim/racks/", "TESTE2", resource_label="Rack"
+    )
+
+    assert result["id"] == 4
+    assert client.calls == [
+        ("GET", "/api/dcim/racks/", {"name": "TESTE2", "limit": 0}),
+        ("GET", "/api/dcim/racks/", {"q": "TESTE2", "limit": 0}),
+    ]
+
+
+def test_scoped_rack_uses_site_and_location_ids() -> None:
+    client = FakeClient(
+        [
+            page({"id": 1, "name": "CPTEC"}),
+            page({"id": 2, "name": "Datacenter"}),
+            page({"id": 4, "name": "RACK-04"}),
+        ]
+    )
+
+    result = get_scoped_rack(  # type: ignore[arg-type]
+        client,
+        "RACK-04",
+        site_name="CPTEC",
+        location_name="Datacenter",
+    )
+
+    assert result["id"] == 4
+    assert client.calls[-1][2] == {
+        "site_id": 1,
+        "location_id": 2,
+        "name": "RACK-04",
+        "limit": 0,
+    }
+
+
+def test_rack_render_uses_starting_unit_and_half_unit(capsys: pytest.CaptureFixture[str]) -> None:
+    render_rack(
+        {
+            "name": "RACK-10",
+            "starting_unit": 10,
+            "u_height": 2,
+            "units": [
+                {"id": "11.5", "occupied": False},
+                {"id": "11.0", "occupied": False},
+                {
+                    "id": "10.5",
+                    "occupied": True,
+                    "device": {"name": "Half-U"},
+                },
+                {"id": "10.0", "occupied": False},
+            ],
+        },
+        DetailOutputFormat.human,
+    )
+
+    output = capsys.readouterr().out
+    assert "11U" in output
+    assert "10U" in output
+    assert "U10.5: Half-U" in output
+    assert "01U" not in output
+
+
+def test_trace_preserves_breakout_branches() -> None:
+    client = FakeClient(
+        [
+            page({"id": 7, "name": "Server-01"}),
+            page({"id": 10, "name": "eth0"}),
+            [
+                [
+                    [{"id": 10, "name": "eth0"}],
+                    {"id": 20, "label": "BREAKOUT"},
+                    [
+                        {"id": 30, "name": "Gi0/1", "device": {"name": "SW1"}},
+                        {"id": 31, "name": "Gi0/2", "device": {"name": "SW1"}},
+                    ],
+                ]
+            ],
+        ]
+    )
+
+    result = DevicesService(client).trace("Server-01", "eth0")  # type: ignore[arg-type]
+
+    assert len(result["segments"]) == 1
+    assert [item["name"] for item in result["segments"][0]["far"]] == [
+        "Gi0/1",
+        "Gi0/2",
+    ]
+
+
+def test_device_inspect_loads_reported_components() -> None:
+    client = FakeClient(
+        [
+            page({"id": 7, "name": "Server-01", "front_port_count": 1}),
+            page(),
+            page(),
+            page({"id": 40, "name": "USB", "type": {"label": "USB A"}}),
+        ]
+    )
+
+    result = DevicesService(client).inspect("Server-01")  # type: ignore[arg-type]
+
+    assert result["components"]["front_ports"][0]["name"] == "USB"
+    assert result["components"]["front_ports"][0]["type"] == "USB A"
+    assert len(client.calls) == 4
+
+
+def test_singular_commands_are_discoverable() -> None:
+    runner = CliRunner()
+    root_help = runner.invoke(app, ["--help"])
+    site_help = runner.invoke(app, ["site", "status", "--help"])
+    rack_help = runner.invoke(app, ["rack", "capacity", "--help"])
+    device_help = runner.invoke(app, ["device", "allocate", "--help"])
+
+    assert root_help.exit_code == 0
+    assert site_help.exit_code == 0
+    assert rack_help.exit_code == 0
+    assert device_help.exit_code == 0
+    assert "--rack-site" in device_help.stdout
+
+
+def test_invalid_rack_face_exits_before_api_call() -> None:
+    result = CliRunner().invoke(app, ["rack", "show", "R01", "--face", "side"])
+
+    assert result.exit_code == 2
+    assert "front" in result.output
+
+
+def test_tree_site_scope_filters_large_resource_collections() -> None:
+    client = FakeClient(
+        [
+            page({"id": 2, "name": "CPTEC", "region": {"id": 1}}),
+            page({"id": 1, "name": "Sudeste"}),
+            page(),
+            page(),
+            page(),
+        ]
+    )
+
+    result = InfrastructureService(client).tree(  # type: ignore[arg-type]
+        site_name="CPTEC"
+    )
+
+    assert result["counts"]["sites"] == 1
+    assert client.calls[2][2] == {"site_id": 2, "limit": 0}
+    assert client.calls[3][2] == {"site_id": 2, "limit": 0}
+    assert client.calls[4][2] == {"site_id": 2, "limit": 0}

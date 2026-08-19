@@ -195,3 +195,143 @@ netbox sites list --output table
 ```
 
 Use `netbox --help` e `netbox <recurso> --help` para consultar todas as opções.
+
+## Inspeção e automação
+
+Os comandos de consulta abaixo têm uma saída Rich legível por padrão e aceitam
+`--output json` para scripts, pipelines e agentes:
+
+```bash
+netbox inspect server-01
+netbox inspect server-01 --output json
+netbox search server-01
+netbox search 10.10.0.23 --output json
+```
+
+`inspect` reúne site, local, rack, posição, status, interfaces conectadas e
+endereços IP. `search` procura simultaneamente em dispositivos, racks, sites,
+locais e endereços IP. O limite padrão é de dez resultados por tipo e pode ser
+alterado com `--limit`.
+
+A elevação frontal de um rack pode ser desenhada pelo nome:
+
+```bash
+netbox rack show RACK-04
+netbox rack show RACK-04 --face rear
+netbox rack show RACK-04 --output json
+```
+
+Para mover um dispositivo sem descobrir IDs manualmente:
+
+```bash
+netbox devices move server-01 --rack RACK-02 --position 15
+netbox devices move server-01 --rack RACK-02 --position 15 --output json
+```
+
+O comando atualiza rack, posição e face frontal. Se o rack estiver em outro
+site ou local, esses vínculos também são atualizados. Nomes inexistentes ou
+duplicados são recusados explicitamente, evitando que uma automação escolha o
+recurso errado.
+
+### Disponibilidade, inventário e diagnóstico
+
+Para localizar posições contíguas que comportam um equipamento:
+
+```bash
+netbox rack available RACK-04 --height 2
+netbox rack available RACK-04 --height 2 --output json
+```
+
+Quando nomes de racks se repetem, use site e/ou local como escopo:
+
+```bash
+netbox rack available RACK-04 --height 2 --site CPTEC --location Datacenter
+netbox rack capacity RACK-04 --site CPTEC
+```
+
+A disponibilidade considera ocupação, altura e face do rack. Equipamentos e
+racks com suporte a meia unidade também podem usar valores como `--height 0.5`.
+
+O inventário pode ser filtrado por exatamente um site ou rack:
+
+```bash
+netbox inventory --site CPTEC --output json
+netbox inventory --rack RACK-04 --output csv > rack-04.csv
+netbox inventory --rack RACK-04 --site CPTEC --output json
+```
+
+O CSV possui colunas estáveis para ID, nome, função, modelo, site, local, rack,
+posição, status, IP primário e serial.
+
+Para rastrear uma conexão física registrada no NetBox:
+
+```bash
+netbox trace server-01 eth0
+netbox trace server-01 eth0 --output json
+netbox trace server-01 eth0 --site CPTEC
+```
+
+Por fim, o diagnóstico mostra separadamente se a URL foi alcançada, se existe
+um token configurado e se esse token autentica corretamente:
+
+```bash
+netbox status
+netbox status --output json
+```
+
+`netbox status` retorna código zero apenas quando a autenticação estiver válida,
+permitindo seu uso direto em verificações de shell e pipelines.
+
+### Visão operacional e hierarquia
+
+O resumo de um site agrega recursos e capacidade de todos os seus racks:
+
+```bash
+netbox site status CPTEC
+netbox site status CPTEC --output json
+```
+
+Ele informa quantidade de racks e dispositivos, total de unidades, unidades
+livres e ocupadas, percentual de ocupação e dispositivos por fabricante.
+
+A capacidade detalhada de um rack consolida a ocupação física e também mostra
+frente e traseira separadamente:
+
+```bash
+netbox rack capacity RACK-04
+netbox rack capacity RACK-04 --output json
+```
+
+A árvore completa segue região, site, local, rack e dispositivo:
+
+```bash
+netbox tree
+netbox tree --site CPTEC
+netbox tree --output json
+```
+
+Para consultar um dispositivo com identificação, modelo, fabricante, montagem,
+IPs, campos personalizados e interfaces:
+
+```bash
+netbox device inspect server-01
+netbox device inspect server-01 --output json
+```
+
+Alocação e retirada do rack também podem ser feitas pelo nome:
+
+```bash
+netbox device allocate server-01 --rack RACK-04 --position 20
+netbox device allocate server-01 \
+  --device-site CPTEC \
+  --rack RACK-04 \
+  --rack-site CPTEC \
+  --rack-location Datacenter \
+  --position 20
+netbox device deallocate server-01
+```
+
+Ao desalocar, rack, posição e face são limpos; site e local são preservados.
+As opções de escopo eliminam ambiguidades quando nomes se repetem entre sites.
+`allocate` recusa dispositivos que já estejam em um rack; para reposicioná-los,
+use `netbox device move`.
