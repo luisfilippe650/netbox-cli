@@ -2,22 +2,33 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute, execute_operation, make_service
+from netbox_cli.cli.common import (
+    create_resource,
+    delete_resource,
+    execute,
+    execute_operation,
+    explicit_update_fields,
+    make_service,
+    update_resource,
+)
 from netbox_cli.presentation.details import (
     DetailOutputFormat,
     render_availability,
     render_capacity,
+    render_infrastructure_tree,
     render_rack,
 )
 from netbox_cli.presentation.output import OutputFormat
 from netbox_cli.schemas.racks import AddRack, UpdateRack
 from netbox_cli.service.racks import RacksService
+from netbox_cli.service.infrastructure_service import InfrastructureService
 
 app = typer.Typer(help="Gerencia racks.", no_args_is_help=True)
 
 
 @app.command("post")
 def post_rack(
+    ctx: typer.Context,
     site: Annotated[int, typer.Option("--site", help="ID do site.", min=1)],
     name: Annotated[str, typer.Option("--name", "-n", help="Nome do rack.")],
     width: Annotated[int, typer.Option("--width", help="Largura: 10, 19, 21 ou 23.")],
@@ -30,11 +41,16 @@ def post_rack(
     rack_type: Annotated[
         int | None, typer.Option("--type", "--rack-type", help="ID do tipo.", min=1)
     ] = None,
+    ensure: Annotated[
+        bool, typer.Option("--ensure", help="Converge nome dentro do site.")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Cria um rack; o status é definido automaticamente como active."""
     execute(
-        lambda: make_service(RacksService).create(
+        lambda: create_resource(
+            RacksService,
             AddRack(
                 site=site,
                 name=name,
@@ -44,7 +60,15 @@ def post_rack(
                 group=group,
                 role=role,
                 rack_type=rack_type,
-            )
+            ),
+            ensure=ensure,
+            dry_run=dry_run,
+            filters={"site_id": site},
+            update_fields=explicit_update_fields(
+                ctx,
+                required={"site", "name", "width", "starting_unit", "u_height"},
+                optional={"group", "role", "rack_type"},
+            ),
         ),
         output=output,
         title="Rack criado",
@@ -89,11 +113,13 @@ def update_rack(
     rack_type: Annotated[
         int | None, typer.Option("--type", "--rack-type", min=1)
     ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Atualiza somente os campos informados de um rack."""
     execute(
-        lambda: make_service(RacksService).update(
+        lambda: update_resource(
+            RacksService,
             rack_id,
             UpdateRack(
                 site=site,
@@ -105,6 +131,7 @@ def update_rack(
                 role=role,
                 rack_type=rack_type,
             ),
+            dry_run=dry_run,
         ),
         output=output,
         title="Rack atualizado",
@@ -114,15 +141,43 @@ def update_rack(
 @app.command("delete")
 def delete_rack(
     rack_id: Annotated[int, typer.Argument(min=1)],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    ignore_not_found: Annotated[bool, typer.Option("--ignore-not-found")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Exclui um rack pelo ID."""
 
-    def operation() -> dict[str, object]:
-        make_service(RacksService).delete(rack_id)
-        return {"deleted": True, "resource": "rack", "id": rack_id}
+    execute(
+        lambda: delete_resource(
+            RacksService,
+            rack_id,
+            resource="rack",
+            dry_run=dry_run,
+            ignore_not_found=ignore_not_found,
+        ),
+        output=output,
+        title="Rack removido",
+    )
 
-    execute(operation, output=output, title="Rack removido")
+
+@app.command("tree")
+def rack_tree(
+    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    site: Annotated[str | None, typer.Option("--site")] = None,
+    location: Annotated[str | None, typer.Option("--location")] = None,
+    output: Annotated[
+        DetailOutputFormat, typer.Option("--output", "-o")
+    ] = DetailOutputFormat.human,
+) -> None:
+    """Exibe um rack e os dispositivos nele instalados."""
+    result = execute_operation(
+        lambda: make_service(InfrastructureService).rack_tree(
+            name,
+            site_name=site,
+            location_name=location,
+        )
+    )
+    render_infrastructure_tree(result, output)
 
 
 @app.command("show")

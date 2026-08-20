@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from netbox_cli.client import NetBoxClient, get_all_results
-from netbox_cli.service.lookup import get_by_name
+from netbox_cli.service.devices.inspection_service import DeviceInspectionService
+from netbox_cli.service.lookup import get_by_name, get_scoped_rack
 
 
 @dataclass(slots=True)
@@ -131,6 +132,106 @@ class InfrastructureService:
         result["counts"] = {kind + "s": len(items) for kind, items in resources.items()}
         return result
 
+    def rack_tree(
+        self,
+        name: str,
+        *,
+        site_name: str | None = None,
+        location_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Monta a árvore de um rack e dos dispositivos nele instalados."""
+        rack = get_scoped_rack(
+            self.client,
+            name,
+            site_name=site_name,
+            location_name=location_name,
+        )
+        devices = self._list("device", rack_id=rack["id"])
+        children = [_node("device", device).as_dict() for device in devices]
+        children.sort(key=lambda item: str(item.get("name", "")).casefold())
+        return {
+            "type": "rack",
+            "id": rack.get("id"),
+            "name": _name(rack),
+            "site": _related_name(rack.get("site")),
+            "location": _related_name(rack.get("location")),
+            "status": _related_label(rack.get("status")),
+            "u_height": rack.get("u_height"),
+            "device_count": len(devices),
+            "children": children,
+        }
+
+    def device_tree(
+        self,
+        name: str,
+        *,
+        site_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Monta localização, interfaces, IPs e conexões de um dispositivo."""
+        details = DeviceInspectionService(self.client).inspect(
+            name,
+            site_name=site_name,
+        )
+        children: list[dict[str, Any]] = []
+
+        location_path = _device_location_path(details)
+        if location_path:
+            children.append(
+                {
+                    "type": "group",
+                    "name": "Localização",
+                    "children": [location_path],
+                }
+            )
+
+        interface_nodes, assigned_addresses = _interface_nodes(details)
+        if interface_nodes:
+            children.append(
+                {
+                    "type": "group",
+                    "name": "Interfaces e conexões",
+                    "children": interface_nodes,
+                }
+            )
+
+        unassigned_ips = [
+            {
+                "type": "ip",
+                "name": str(ip.get("address") or "—"),
+                "children": [],
+            }
+            for ip in details.get("ip_addresses", [])
+            if isinstance(ip, dict) and str(ip.get("address")) not in assigned_addresses
+        ]
+        if unassigned_ips:
+            children.append(
+                {
+                    "type": "group",
+                    "name": "IPs sem interface",
+                    "children": unassigned_ips,
+                }
+            )
+
+        component_nodes = _component_nodes(details)
+        if component_nodes:
+            children.append(
+                {
+                    "type": "group",
+                    "name": "Componentes e conexões",
+                    "children": component_nodes,
+                }
+            )
+
+        return {
+            "type": "device",
+            "id": details.get("id"),
+            "name": details.get("name"),
+            "position": details.get("position"),
+            "status": details.get("status"),
+            "children": children,
+            "details": details,
+        }
+
     def _list(self, kind: str, **filters: Any) -> list[dict[str, Any]]:
         return get_all_results(
             self.client,
@@ -173,3 +274,122 @@ def _id(value: Any) -> Any:
 
 def _name(item: dict[str, Any]) -> str:
     return str(item.get("name") or item.get("display") or item.get("id"))
+
+
+def _related_name(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value.get("name") or value.get("display")
+    return value
+
+
+def _related_label(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value.get("label") or value.get("value")
+    return value
+
+
+def _device_location_path(details: dict[str, Any]) -> dict[str, Any] | None:
+    levels = [
+        ("site", details.get("site")),
+        ("location", details.get("location")),
+        ("rack", details.get("rack")),
+    ]
+    root: dict[str, Any] | None = None
+    current: dict[str, Any] | None = None
+    for node_type, value in levels:
+        if not value:
+            continue
+        node: dict[str, Any] = {
+            "type": node_type,
+            "name": str(value),
+            "children": [],
+        }
+        if node_type == "rack":
+            node["position"] = details.get("position")
+        if root is None:
+            root = node
+        if current is not None:
+            current["children"].append(node)
+        current = node
+    return root
+
+
+def _interface_nodes(
+    details: dict[str, Any],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    addresses_by_interface: dict[str, list[str]] = {}
+    for ip in details.get("ip_addresses", []):
+        if not isinstance(ip, dict) or not ip.get("interface") or not ip.get("address"):
+            continue
+        addresses_by_interface.setdefault(str(ip["interface"]), []).append(
+            str(ip["address"])
+        )
+
+    assigned_addresses: set[str] = set()
+    nodes = []
+    for interface in details.get("interfaces", []):
+        if not isinstance(interface, dict):
+            continue
+        interface_name = str(interface.get("name") or "—")
+        children: list[dict[str, Any]] = []
+        connected_device = interface.get("connected_device")
+        connected_interface = interface.get("connected_interface")
+        if connected_device or connected_interface:
+            target = ":".join(
+                str(value) for value in (connected_device, connected_interface) if value
+            )
+            children.append({"type": "connection", "name": target, "children": []})
+        for address in addresses_by_interface.get(interface_name, []):
+            assigned_addresses.add(address)
+            children.append({"type": "ip", "name": address, "children": []})
+        nodes.append(
+            {
+                "type": "interface",
+                "name": interface_name,
+                "enabled": interface.get("enabled"),
+                "interface_type": interface.get("type"),
+                "children": children,
+            }
+        )
+    return nodes, assigned_addresses
+
+
+def _component_nodes(details: dict[str, Any]) -> list[dict[str, Any]]:
+    groups = []
+    components = details.get("components")
+    if not isinstance(components, dict):
+        return groups
+    for component_type, items in components.items():
+        item_nodes = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            connections = [
+                {
+                    "type": "connection",
+                    "name": ":".join(
+                        str(value)
+                        for value in (connection.get("device"), connection.get("name"))
+                        if value
+                    ),
+                    "children": [],
+                }
+                for connection in item.get("connected_to", [])
+                if isinstance(connection, dict)
+            ]
+            item_nodes.append(
+                {
+                    "type": "component",
+                    "name": str(item.get("name") or item.get("id") or "—"),
+                    "children": connections,
+                }
+            )
+        if item_nodes:
+            groups.append(
+                {
+                    "type": "group",
+                    "name": component_type.replace("_", " ").title(),
+                    "children": item_nodes,
+                }
+            )
+    return groups

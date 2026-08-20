@@ -2,7 +2,14 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute, execute_operation, make_service
+from netbox_cli.cli.common import (
+    create_resource,
+    delete_resource,
+    execute,
+    execute_operation,
+    explicit_update_fields,
+    make_service,
+)
 from netbox_cli.presentation.details import DetailOutputFormat, render_site_status
 from netbox_cli.presentation.output import OutputFormat
 from netbox_cli.schemas.organization.sites_dto import AddSite
@@ -12,6 +19,7 @@ app = typer.Typer(help="Gerencia sites do NetBox.", no_args_is_help=True)
 
 
 def post_site(
+    ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n")],
     slug: Annotated[str | None, typer.Option()] = None,
     status: Annotated[str, typer.Option()] = "active",
@@ -19,18 +27,30 @@ def post_site(
         int | None, typer.Option("--region", help="ID da região.", min=1)
     ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
+    ensure: Annotated[
+        bool, typer.Option("--ensure", help="Cria ou converge pelo nome.")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Cria um site."""
     execute(
-        lambda: make_service(SitesService).create(
+        lambda: create_resource(
+            SitesService,
             AddSite(
                 name=name,
                 slug=slug,
                 status=status,
                 region=region,
                 description=description,
-            )
+            ),
+            ensure=ensure,
+            dry_run=dry_run,
+            update_fields=explicit_update_fields(
+                ctx,
+                required={"name"},
+                optional={"slug", "status", "region", "description"},
+            ),
         ),
         output=output,
         title="Site criado",
@@ -69,15 +89,23 @@ def list_sites(
 @app.command("delete")
 def delete_site(
     site_id: Annotated[int, typer.Argument(min=1)],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    ignore_not_found: Annotated[bool, typer.Option("--ignore-not-found")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Exclui um site pelo ID."""
 
-    def operation() -> dict[str, object]:
-        make_service(SitesService).delete(site_id)
-        return {"deleted": True, "resource": "site", "id": site_id}
-
-    execute(operation, output=output, title="Site removido")
+    execute(
+        lambda: delete_resource(
+            SitesService,
+            site_id,
+            resource="site",
+            dry_run=dry_run,
+            ignore_not_found=ignore_not_found,
+        ),
+        output=output,
+        title="Site removido",
+    )
 
 
 @app.command("status")

@@ -30,6 +30,7 @@ from netbox_cli.service.lookup import (
 from netbox_cli.service.organization.sites_service import SitesService
 from netbox_cli.service.racks.racks_service import RacksService
 from netbox_cli.service.search_service import SearchService
+from netbox_cli.service.auth_service import AuthService
 from netbox_cli.service.status_service import StatusService
 
 
@@ -47,6 +48,10 @@ class FakeClient:
 
     def patch(self, endpoint: str, data: dict[str, Any]) -> Any:
         self.calls.append(("PATCH", endpoint, data))
+        return next(self.responses)
+
+    def post(self, endpoint: str, data: dict[str, Any]) -> Any:
+        self.calls.append(("POST", endpoint, data))
         return next(self.responses)
 
 
@@ -361,16 +366,69 @@ def test_status_distinguishes_reachable_url_from_invalid_token() -> None:
     assert result["status_code"] == 403
 
 
+def test_login_composes_netbox_v2_token() -> None:
+    client = FakeClient([{"id": 7, "version": 2, "key": "abc123", "token": "secret"}])
+
+    token = AuthService(client).login("admin", "password")  # type: ignore[arg-type]
+
+    assert token == "nbt_abc123.secret"
+    assert client.calls == [
+        (
+            "POST",
+            "/api/users/tokens/provision/",
+            {
+                "username": "admin",
+                "password": "password",
+                "description": "netbox-cli",
+                "write_enabled": True,
+                "version": 2,
+            },
+        )
+    ]
+
+
 def test_status_reports_authenticated_user() -> None:
-    client = FakeClient([{"username": "admin"}])
+    client = FakeClient(
+        [
+            {
+                "id": 1,
+                "username": "admin",
+                "display": "admin (NetBox Admin)",
+                "first_name": "NetBox",
+                "last_name": "Admin",
+                "email": "admin@example.com",
+                "is_active": True,
+                "last_login": "2026-08-20T10:00:00Z",
+                "date_joined": "2026-01-01T10:00:00Z",
+                "groups": [{"name": "Administradores"}],
+                "permissions": [{"name": "DCIM"}, {"name": "IPAM"}],
+            },
+            [],
+        ]
+    )
 
     result = StatusService(  # type: ignore[arg-type]
-        client, url="http://localhost:8000", token_configured=True
+        client,
+        url="http://localhost:8000",
+        token_configured=True,
+        token_version=2,
     ).check()
 
     assert result["reachable"] is True
     assert result["authenticated"] is True
     assert result["user"] == "admin"
+    assert result["token_version"] == 2
+    assert result["user_details"] == {
+        "id": 1,
+        "username": "admin",
+        "display": "admin (NetBox Admin)",
+        "full_name": "NetBox Admin",
+        "email": "admin@example.com",
+        "active": True,
+        "last_login": "2026-08-20T10:00:00Z",
+        "date_joined": "2026-01-01T10:00:00Z",
+        "groups": ["Administradores"],
+    }
 
 
 def test_rack_capacity_consolidates_front_and_rear_units() -> None:
@@ -674,11 +732,15 @@ def test_device_inspect_loads_reported_components() -> None:
 def test_singular_commands_are_discoverable() -> None:
     runner = CliRunner()
     root_help = runner.invoke(app, ["--help"])
+    login_help = runner.invoke(app, ["login", "--help"])
     site_help = runner.invoke(app, ["site", "status", "--help"])
     rack_help = runner.invoke(app, ["rack", "capacity", "--help"])
     device_help = runner.invoke(app, ["device", "allocate", "--help"])
 
     assert root_help.exit_code == 0
+    assert login_help.exit_code == 0
+    assert "Autentica no NetBox" in login_help.output
+    assert "login" in root_help.output
     assert site_help.exit_code == 0
     assert rack_help.exit_code == 0
     assert device_help.exit_code == 0

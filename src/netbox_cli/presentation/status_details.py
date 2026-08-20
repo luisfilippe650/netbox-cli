@@ -4,17 +4,18 @@ from typing import Any
 
 from rich import box
 from rich.console import Group
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
 from netbox_cli.presentation.formats import DetailOutputFormat
-from netbox_cli.presentation.output import console, render_json
+from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_search(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     results = data.get("results", [])
@@ -46,25 +47,53 @@ def render_search(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_status(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     table = Table.grid(padding=(0, 1))
     table.add_column(style="bold")
     table.add_column()
-    table.add_row("URL", str(data.get("url")))
+    table.add_row("URL", Text(str(data.get("url"))))
+    table.add_row("Verificação", Text(str(data.get("endpoint") or "—")))
     table.add_row("Alcançável", _yes_no(bool(data.get("reachable"))))
     table.add_row("Token configurado", _yes_no(bool(data.get("token_configured"))))
+    token_version = data.get("token_version")
+    table.add_row("Versão do token", f"v{token_version}" if token_version else "—")
     table.add_row("Autenticado", _yes_no(bool(data.get("authenticated"))))
-    table.add_row("Usuário", str(data.get("user") or "—"))
+    table.add_row("Superusuário", _yes_no(bool(data.get("superuser"))))
+    table.add_row("Uso autorizado", _yes_no(bool(data.get("authorized"))))
+    details = data.get("user_details") or {}
+    table.add_row(
+        "Usuário",
+        Text(str(details.get("username") or data.get("user") or "—")),
+    )
+    table.add_row(
+        "Nome",
+        Text(str(details.get("full_name") or details.get("display") or "—")),
+    )
+    table.add_row("E-mail", Text(str(details.get("email") or "—")))
+    if details.get("active") is not None:
+        table.add_row("Usuário ativo", _yes_no(bool(details.get("active"))))
+    groups = details.get("groups") or []
+    table.add_row(
+        "Grupos",
+        Text(", ".join(str(group) for group in groups) or "—"),
+    )
+    if details:
+        table.add_row("Último login", Text(str(details.get("last_login") or "—")))
     if data.get("status_code"):
         table.add_row("HTTP", str(data["status_code"]))
-    color = "green" if data.get("authenticated") else "yellow"
+    if data.get("message"):
+        table.add_row(
+            "Diagnóstico",
+            Text(str(data["message"]).replace("\n", " · ")),
+        )
+    color = "green" if data.get("authorized") else "yellow"
     console.print(Panel.fit(table, title="NetBox status", border_style=color))
 
 
 def render_site_status(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     site = data.get("site", {})
@@ -99,10 +128,10 @@ def render_site_status(data: dict[str, Any], output: DetailOutputFormat) -> None
 def render_infrastructure_tree(
     data: dict[str, Any], output: DetailOutputFormat
 ) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
-    root = Tree("[bold blue]NetBox[/bold blue]")
+    root = Tree(_tree_label(data, root=True))
     for child in data.get("children", []):
         _add_tree_node(root, child)
     console.print(root)
@@ -124,11 +153,34 @@ def _add_tree_node(parent: Tree, node: dict[str, Any]) -> None:
         "location": "cyan",
         "rack": "yellow",
         "device": "white",
+        "interface": "bold cyan",
+        "connection": "green",
+        "ip": "magenta",
+        "component": "blue",
         "group": "dim",
     }
-    label = str(node.get("name") or "—")
-    if node.get("type") == "device" and node.get("position") is not None:
-        label += f" [dim](U{_number(node['position'])})[/dim]"
-    branch = parent.add(f"[{styles.get(str(node.get('type')), 'white')}]{label}[/]")
+    node_type = str(node.get("type"))
+    label = _tree_label(node)
+    branch = parent.add(f"[{styles.get(node_type, 'white')}]{label}[/]")
     for child in node.get("children", []):
         _add_tree_node(branch, child)
+
+
+def _tree_label(node: dict[str, Any], *, root: bool = False) -> str:
+    node_type = str(node.get("type") or "root")
+    label = escape(str(node.get("name") or "NetBox"))
+    if node_type == "connection":
+        label = f"→ {label}"
+    elif node_type == "ip":
+        label = f"IP {label}"
+    if node_type in {"device", "rack"} and node.get("position") is not None:
+        label += f" [dim](U{_number(node['position'])})[/dim]"
+    if node_type == "interface" and node.get("enabled") is False:
+        label += " [dim](desabilitada)[/dim]"
+    if root:
+        style = {
+            "rack": "bold yellow",
+            "device": "bold white",
+        }.get(node_type, "bold blue")
+        return f"[{style}]{label}[/]"
+    return label

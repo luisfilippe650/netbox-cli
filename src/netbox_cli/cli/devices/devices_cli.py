@@ -2,18 +2,32 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute, execute_operation, make_service, parse_json_object
-from netbox_cli.presentation.details import DetailOutputFormat, render_inspection
-from netbox_cli.presentation.output import render_json
+from netbox_cli.cli.common import (
+    create_resource,
+    delete_resource,
+    execute,
+    execute_operation,
+    explicit_update_fields,
+    make_service,
+    parse_json_object,
+)
+from netbox_cli.presentation.details import (
+    DetailOutputFormat,
+    render_infrastructure_tree,
+    render_inspection,
+)
+from netbox_cli.presentation.output import is_json_output, render_json
 from netbox_cli.presentation.output import OutputFormat
 from netbox_cli.schemas.devices import AddDevice
 from netbox_cli.service.devices import DevicesService
+from netbox_cli.service.infrastructure_service import InfrastructureService
 
 app = typer.Typer(help="Gerencia dispositivos.", no_args_is_help=True)
 
 
 @app.command("post")
 def post_device(
+    ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n")],
     role: Annotated[int, typer.Option("--role", help="ID da função.", min=1)],
     device_type: Annotated[int, typer.Option("--device-type", help="ID do tipo.", min=1)],
@@ -29,11 +43,16 @@ def post_device(
             help='Objeto JSON, por exemplo: {"patrimonio":"123"}.',
         ),
     ] = "{}",
+    ensure: Annotated[
+        bool, typer.Option("--ensure", help="Converge nome dentro do site.")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Adiciona um dispositivo; o status é active e a face montada é front."""
     execute(
-        lambda: make_service(DevicesService).create(
+        lambda: create_resource(
+            DevicesService,
             AddDevice(
                 name=name,
                 role=role,
@@ -46,7 +65,22 @@ def post_device(
                 custom_fields=parse_json_object(
                     custom_fields, option_name="--custom-fields"
                 ),
+            ),
+            ensure=ensure,
+            dry_run=dry_run,
+            filters={"site_id": site},
+            update_fields=explicit_update_fields(
+                ctx,
+                required={"name", "role", "device_type", "site"},
+                optional={
+                    "serial": "serial",
+                    "location": "location",
+                    "rack": "rack",
+                    "position": "position",
+                    "custom_fields": "custom_fields",
+                },
             )
+            | ({"face"} if position is not None else set()),
         ),
         output=output,
         title="Dispositivo criado",
@@ -86,15 +120,23 @@ app.command("list", hidden=True)(all_devices)
 @app.command("delete")
 def delete_device(
     device_id: Annotated[int, typer.Argument(min=1)],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    ignore_not_found: Annotated[bool, typer.Option("--ignore-not-found")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Exclui um dispositivo pelo ID."""
 
-    def operation() -> dict[str, object]:
-        make_service(DevicesService).delete(device_id)
-        return {"deleted": True, "resource": "device", "id": device_id}
-
-    execute(operation, output=output, title="Dispositivo removido")
+    execute(
+        lambda: delete_resource(
+            DevicesService,
+            device_id,
+            resource="device",
+            dry_run=dry_run,
+            ignore_not_found=ignore_not_found,
+        ),
+        output=output,
+        title="Dispositivo removido",
+    )
 
 
 @app.command("move")
@@ -105,6 +147,7 @@ def move_device(
     device_site: Annotated[str | None, typer.Option("--device-site")] = None,
     rack_site: Annotated[str | None, typer.Option("--rack-site")] = None,
     rack_location: Annotated[str | None, typer.Option("--rack-location")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[
         DetailOutputFormat, typer.Option("--output", "-o")
     ] = DetailOutputFormat.human,
@@ -118,13 +161,15 @@ def move_device(
             device_site_name=device_site,
             rack_site_name=rack_site,
             rack_location_name=rack_location,
+            dry_run=dry_run,
         )
     )
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(result)
     else:
+        verb = "seria movido" if result.get("dry_run") else "movido"
         typer.echo(
-            f"{result['device']} movido para {result['rack']} "
+            f"{result['device']} {verb} para {result['rack']} "
             f"na posição U{result['position']}."
         )
 
@@ -144,6 +189,24 @@ def inspect_device(
     render_inspection(result, output)
 
 
+@app.command("tree")
+def device_tree(
+    name: Annotated[str, typer.Argument(help="Nome exato do dispositivo.")],
+    site: Annotated[str | None, typer.Option("--site")] = None,
+    output: Annotated[
+        DetailOutputFormat, typer.Option("--output", "-o")
+    ] = DetailOutputFormat.human,
+) -> None:
+    """Exibe localização, interfaces, IPs e conexões de um dispositivo."""
+    result = execute_operation(
+        lambda: make_service(InfrastructureService).device_tree(
+            name,
+            site_name=site,
+        )
+    )
+    render_infrastructure_tree(result, output)
+
+
 @app.command("allocate")
 def allocate_device(
     name: Annotated[str, typer.Argument(help="Nome exato do dispositivo.")],
@@ -152,6 +215,7 @@ def allocate_device(
     device_site: Annotated[str | None, typer.Option("--device-site")] = None,
     rack_site: Annotated[str | None, typer.Option("--rack-site")] = None,
     rack_location: Annotated[str | None, typer.Option("--rack-location")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[
         DetailOutputFormat, typer.Option("--output", "-o")
     ] = DetailOutputFormat.human,
@@ -165,13 +229,15 @@ def allocate_device(
             device_site_name=device_site,
             rack_site_name=rack_site,
             rack_location_name=rack_location,
+            dry_run=dry_run,
         )
     )
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(result)
     else:
+        verb = "seria alocado" if result.get("dry_run") else "alocado"
         typer.echo(
-            f"{result['device']} alocado em {result['rack']} "
+            f"{result['device']} {verb} em {result['rack']} "
             f"na posição U{result['position']}."
         )
 
@@ -180,18 +246,22 @@ def allocate_device(
 def deallocate_device(
     name: Annotated[str, typer.Argument(help="Nome exato do dispositivo.")],
     site: Annotated[str | None, typer.Option("--site")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[
         DetailOutputFormat, typer.Option("--output", "-o")
     ] = DetailOutputFormat.human,
 ) -> None:
     """Retira um dispositivo do rack, preservando seu site e local."""
     result = execute_operation(
-        lambda: make_service(DevicesService).deallocate(name, site_name=site)
+        lambda: make_service(DevicesService).deallocate(
+            name, site_name=site, dry_run=dry_run
+        )
     )
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(result)
     else:
+        verb = "seria desalocado" if result.get("dry_run") else "desalocado"
         typer.echo(
-            f"{result['device']} desalocado de "
+            f"{result['device']} {verb} de "
             f"{result.get('previous_rack') or 'nenhum rack'}."
         )

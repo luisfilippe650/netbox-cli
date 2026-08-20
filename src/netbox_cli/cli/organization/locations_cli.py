@@ -2,7 +2,13 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute, make_service
+from netbox_cli.cli.common import (
+    create_resource,
+    delete_resource,
+    execute,
+    explicit_update_fields,
+    make_service,
+)
 from netbox_cli.presentation.output import OutputFormat
 from netbox_cli.schemas.organization.locations_dto import AddLocation
 from netbox_cli.service.organization.locations_service import LocationsService
@@ -11,6 +17,7 @@ app = typer.Typer(help="Gerencia locais do NetBox.", no_args_is_help=True)
 
 
 def post_location(
+    ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n")],
     site: Annotated[int, typer.Option("--site", help="ID do site.", min=1)],
     slug: Annotated[str | None, typer.Option()] = None,
@@ -19,11 +26,16 @@ def post_location(
         int | None, typer.Option("--parent", help="ID do local pai.", min=1)
     ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
+    ensure: Annotated[
+        bool, typer.Option("--ensure", help="Converge nome dentro do site.")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Cria um local associado a um site."""
     execute(
-        lambda: make_service(LocationsService).create(
+        lambda: create_resource(
+            LocationsService,
             AddLocation(
                 name=name,
                 site=site,
@@ -31,7 +43,15 @@ def post_location(
                 status=status,
                 parent=parent,
                 description=description,
-            )
+            ),
+            ensure=ensure,
+            dry_run=dry_run,
+            filters={"site_id": site},
+            update_fields=explicit_update_fields(
+                ctx,
+                required={"name", "site"},
+                optional={"slug", "status", "parent", "description"},
+            ),
         ),
         output=output,
         title="Local criado",
@@ -72,12 +92,20 @@ def list_locations(
 @app.command("delete")
 def delete_location(
     location_id: Annotated[int, typer.Argument(min=1)],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    ignore_not_found: Annotated[bool, typer.Option("--ignore-not-found")] = False,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Exclui um local pelo ID."""
 
-    def operation() -> dict[str, object]:
-        make_service(LocationsService).delete(location_id)
-        return {"deleted": True, "resource": "location", "id": location_id}
-
-    execute(operation, output=output, title="Local removido")
+    execute(
+        lambda: delete_resource(
+            LocationsService,
+            location_id,
+            resource="location",
+            dry_run=dry_run,
+            ignore_not_found=ignore_not_found,
+        ),
+        output=output,
+        title="Local removido",
+    )

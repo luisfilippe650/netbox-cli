@@ -5,7 +5,7 @@ import termios
 import tty
 from dataclasses import dataclass
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
@@ -46,7 +46,9 @@ class ChoiceMenu:
         file_descriptor = sys.stdin.fileno()
         previous_settings = termios.tcgetattr(file_descriptor)
         try:
-            tty.setraw(file_descriptor)
+            # cbreak captura as teclas imediatamente sem desativar o tratamento
+            # de quebras de linha usado pelo Rich na saída do terminal.
+            tty.setcbreak(file_descriptor)
             with Live(
                 self._render(title, options, selected),
                 console=self.console,
@@ -95,15 +97,16 @@ class ChoiceMenu:
             self.console.print("[red]Escolha uma opção válida.[/red]")
 
     @staticmethod
-    def _render(title: str, options: list[MenuOption], selected: int) -> Group:
-        lines: list[Text] = [Text(title, style="bold"), Text("")]
+    def _render(title: str, options: list[MenuOption], selected: int) -> Text:
+        menu = Text(title, style="bold")
+        menu.append("\n\n")
         for index, option in enumerate(options):
             if index == selected:
-                line = Text("❯ ", style="bold cyan")
-                line.append(option.label, style="bold reverse cyan")
+                menu.append("❯ ", style="bold cyan")
+                menu.append(option.label, style="bold reverse cyan")
             else:
-                line = Text("  ")
-                line.append(option.label)
-            lines.append(line)
-        lines.extend([Text(""), Text("↑/↓ navegar  •  Enter selecionar", style="dim")])
-        return Group(*lines)
+                menu.append("  ")
+                menu.append(option.label)
+            menu.append("\n")
+        menu.append("\n↑/↓ navegar  •  Enter selecionar", style="dim")
+        return menu

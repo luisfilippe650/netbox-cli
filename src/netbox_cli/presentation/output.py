@@ -8,6 +8,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from netbox_cli.runtime import current_options
+
 
 class OutputFormat(str, Enum):
     json = "json"
@@ -16,6 +18,14 @@ class OutputFormat(str, Enum):
 
 console = Console()
 error_console = Console(stderr=True)
+
+
+def is_json_output(output: Enum | str) -> bool:
+    global_output = current_options().output
+    if global_output is not None:
+        return global_output == "json"
+    value = output.value if isinstance(output, Enum) else str(output)
+    return value == "json"
 
 
 def _display_value(value: Any) -> str:
@@ -29,8 +39,15 @@ def _display_value(value: Any) -> str:
 
 
 def render_json(data: Any) -> None:
-    # typer.echo mantém a saída livre de ANSI para pipes, agentes e scripts.
-    typer.echo(json.dumps(data, ensure_ascii=False, default=str))
+    # Mantém JSON puro para pipes e scripts, mas com leitura confortável no terminal.
+    typer.echo(
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        )
+    )
 
 
 def render_table(data: Any, *, title: str) -> None:
@@ -81,7 +98,7 @@ def render_table(data: Any, *, title: str) -> None:
 
 
 def render(data: Any, output: OutputFormat, *, title: str) -> None:
-    if output is OutputFormat.json:
+    if is_json_output(output):
         render_json(data)
     else:
         render_table(data, title=title)

@@ -9,11 +9,11 @@ from rich.text import Text
 from rich.tree import Tree
 
 from netbox_cli.presentation.formats import DetailOutputFormat
-from netbox_cli.presentation.output import console, render_json
+from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_inspection(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     details = Table.grid(padding=(0, 1))
@@ -116,7 +116,7 @@ def render_inspection(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_trace(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     root = Tree(

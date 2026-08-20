@@ -22,6 +22,7 @@ class DevicePlacementService:
         device_site_name: str | None = None,
         rack_site_name: str | None = None,
         rack_location_name: str | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         _validate_position(position)
         device = get_device(self.client, name, site_name=device_site_name)
@@ -32,6 +33,7 @@ class DevicePlacementService:
             position=position,
             rack_site_name=rack_site_name,
             rack_location_name=rack_location_name,
+            dry_run=dry_run,
         )
 
     def allocate(
@@ -43,6 +45,7 @@ class DevicePlacementService:
         device_site_name: str | None = None,
         rack_site_name: str | None = None,
         rack_location_name: str | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         _validate_position(position)
         device = get_device(self.client, name, site_name=device_site_name)
@@ -59,14 +62,27 @@ class DevicePlacementService:
             position=position,
             rack_site_name=rack_site_name,
             rack_location_name=rack_location_name,
+            dry_run=dry_run,
         )
         result["allocated"] = result.pop("moved")
+        if dry_run:
+            result["action"] = "would_allocate"
         return result
 
     def deallocate(
-        self, name: str, *, site_name: str | None = None
+        self, name: str, *, site_name: str | None = None, dry_run: bool = False
     ) -> dict[str, Any]:
         device = get_device(self.client, name, site_name=site_name)
+        if dry_run:
+            return {
+                "action": "would_deallocate",
+                "changed": device.get("rack") is not None,
+                "dry_run": True,
+                "device": device.get("name", name),
+                "previous_rack": nested_value(device.get("rack"), "name"),
+                "previous_position": device.get("position"),
+                "payload": {"rack": None, "position": None, "face": None},
+            }
         updated = self.client.patch(
             f"{DEVICES_ENDPOINT}{device['id']}/",
             {"rack": None, "position": None, "face": None},
@@ -87,6 +103,7 @@ class DevicePlacementService:
         position: float,
         rack_site_name: str | None,
         rack_location_name: str | None,
+        dry_run: bool,
     ) -> dict[str, Any]:
         rack = get_scoped_rack(
             self.client,
@@ -106,6 +123,18 @@ class DevicePlacementService:
         payload["location"] = (
             rack_location.get("id") if isinstance(rack_location, dict) else None
         )
+        if dry_run:
+            return {
+                "action": "would_move",
+                "changed": True,
+                "dry_run": True,
+                "moved": False,
+                "device": device.get("name", name),
+                "rack": rack.get("name", rack_name),
+                "position": position,
+                "face": "front",
+                "payload": payload,
+            }
         updated = self.client.patch(f"{DEVICES_ENDPOINT}{device['id']}/", payload)
         return {
             "moved": True,

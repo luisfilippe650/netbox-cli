@@ -7,11 +7,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from netbox_cli.presentation.formats import DetailOutputFormat
-from netbox_cli.presentation.output import console, render_json
+from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_rack(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     units_by_number = {
@@ -57,7 +57,7 @@ def render_rack(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_availability(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     positions = data.get("positions", [])
@@ -78,7 +78,7 @@ def render_availability(data: dict[str, Any], output: DetailOutputFormat) -> Non
 
 
 def render_capacity(data: dict[str, Any], output: DetailOutputFormat) -> None:
-    if output is DetailOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     table = Table.grid(padding=(0, 1))

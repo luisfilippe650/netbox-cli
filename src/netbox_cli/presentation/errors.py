@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
@@ -8,6 +10,7 @@ from rich.text import Text
 from netbox_cli.client import NetBoxClientError
 from netbox_cli.config import ConfigurationError
 from netbox_cli.exceptions import NetBoxCLIError
+from netbox_cli.runtime import wants_json
 
 
 def _validation_message(error: ValidationError) -> str:
@@ -45,6 +48,37 @@ def show_error(error: Exception, *, console: Console | None = None) -> None:
         hint = "Revise os dados informados e tente novamente."
     else:
         message = str(error)
+
+    if wants_json():
+        code = {
+            "ResourceNotFoundError": "resource_not_found",
+            "AmbiguousResourceError": "ambiguous_resource",
+            "AuthenticationError": "authentication_error",
+            "SuperuserRequiredError": "superuser_required",
+            "InputError": "input_error",
+            "InventoryFilterError": "invalid_filter",
+            "PaginationError": "pagination_error",
+        }.get(type(error).__name__, "operation_failed")
+        status = getattr(error, "status_code", None)
+        if isinstance(error, ValidationError):
+            code = "validation_error"
+        elif isinstance(error, ConfigurationError):
+            code = "configuration_error"
+        elif isinstance(error, NetBoxClientError):
+            code = "http_error" if status is not None else "connection_error"
+        serialized = json.dumps(
+            {
+                "error": {
+                    "code": code,
+                    "message": message,
+                    **({"status": status} if status is not None else {}),
+                }
+            },
+            ensure_ascii=False,
+        )
+        target.file.write(f"{serialized}\n")
+        target.file.flush()
+        return
 
     content = Text(message or "Ocorreu um erro inesperado.")
     if hint:

@@ -9,11 +9,11 @@ from rich import box
 from rich.table import Table
 
 from netbox_cli.presentation.formats import InventoryOutputFormat
-from netbox_cli.presentation.output import console, render_json
+from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_inventory(data: dict[str, Any], output: InventoryOutputFormat) -> None:
-    if output is InventoryOutputFormat.json:
+    if is_json_output(output):
         render_json(data)
         return
     rows = data.get("results", [])

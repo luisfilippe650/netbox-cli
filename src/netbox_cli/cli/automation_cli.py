@@ -2,9 +2,8 @@ from typing import Annotated
 
 import typer
 
-from netbox_cli.cli.common import execute_operation, make_service
+from netbox_cli.cli.common import execute_operation, load_settings, make_service
 from netbox_cli.client import NetBoxClient
-from netbox_cli.config import ConfigStore
 from netbox_cli.presentation.details import (
     DetailOutputFormat,
     InventoryOutputFormat,
@@ -92,7 +91,7 @@ def status(
     ] = DetailOutputFormat.human,
 ) -> None:
     """Verifica a URL configurada e o estado da autenticação."""
-    settings = execute_operation(lambda: ConfigStore().load())
+    settings = execute_operation(load_settings)
     client = NetBoxClient(
         settings.netbox_url,
         settings.netbox_token,
@@ -103,11 +102,12 @@ def status(
             client,
             url=settings.netbox_url,
             token_configured=bool(settings.netbox_token),
+            token_version=settings.token_version,
         ).check()
     finally:
         client.close()
     render_status(result, output)
-    if not result["authenticated"]:
+    if not result.get("authorized"):
         raise typer.Exit(code=1)
 
 

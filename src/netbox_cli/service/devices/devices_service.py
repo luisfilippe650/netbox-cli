@@ -40,6 +40,29 @@ class DevicesService(CRUDService[AddDevice]):
         self.custom_fields.validate(item.custom_fields)
         return super().create(item)
 
+    def ensure(
+        self,
+        item: AddDevice,
+        *,
+        identity_field: str = "name",
+        filters: dict[str, Any] | None = None,
+        update_fields: set[str] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        if update_fields is None:
+            update_fields = set(item.model_fields_set)
+            if "position" in update_fields and item.position is not None:
+                update_fields.add("face")
+        if "custom_fields" in update_fields:
+            self.custom_fields.validate(item.custom_fields)
+        return super().ensure(
+            item,
+            identity_field=identity_field,
+            filters=filters,
+            update_fields=update_fields,
+            dry_run=dry_run,
+        )
+
     def build_payload(self, item: AddDevice) -> dict[str, Any]:
         payload = item.model_dump(mode="json", exclude_none=True)
         if item.position is not None:
@@ -58,6 +81,7 @@ class DevicesService(CRUDService[AddDevice]):
         device_site_name: str | None = None,
         rack_site_name: str | None = None,
         rack_location_name: str | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         return self.placement.move(
             name,
@@ -66,6 +90,7 @@ class DevicesService(CRUDService[AddDevice]):
             device_site_name=device_site_name,
             rack_site_name=rack_site_name,
             rack_location_name=rack_location_name,
+            dry_run=dry_run,
         )
 
     def allocate(
@@ -77,6 +102,7 @@ class DevicesService(CRUDService[AddDevice]):
         device_site_name: str | None = None,
         rack_site_name: str | None = None,
         rack_location_name: str | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         return self.placement.allocate(
             name,
@@ -85,10 +111,21 @@ class DevicesService(CRUDService[AddDevice]):
             device_site_name=device_site_name,
             rack_site_name=rack_site_name,
             rack_location_name=rack_location_name,
+            dry_run=dry_run,
         )
 
-    def deallocate(self, name: str, *, site_name: str | None = None) -> dict[str, Any]:
-        return self.placement.deallocate(name, site_name=site_name)
+    def deallocate(
+        self,
+        name: str,
+        *,
+        site_name: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        return self.placement.deallocate(
+            name,
+            site_name=site_name,
+            dry_run=dry_run,
+        )
 
     def trace(
         self,

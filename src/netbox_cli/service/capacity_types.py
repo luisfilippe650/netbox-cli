@@ -89,9 +89,7 @@ class DevicePlacement:
     face: RackFace
 
     @classmethod
-    def from_api(
-        cls, device: Mapping[str, Any]
-    ) -> DevicePlacement | None:
+    def from_api(cls, device: Mapping[str, Any]) -> DevicePlacement | None:
         rack_value = device.get("rack")
         position_value = device.get("position")
         if rack_value is None and position_value is None:
@@ -106,9 +104,7 @@ class DevicePlacement:
         type_id = required_id(
             device.get("device_type"), field="device_type", context=context
         )
-        position = positive_decimal(
-            position_value, field="position", context=context
-        )
+        position = positive_decimal(position_value, field="position", context=context)
         face_value = choice_value(device.get("face")) or RackFace.FRONT.value
         face = RackFace.parse(face_value, context=context)
         return cls(rack_id, type_id, position, face)
@@ -141,9 +137,7 @@ def decimal_value(value: object, *, field: str, context: str) -> Decimal:
     try:
         parsed = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError) as error:
-        raise CapacityError(
-            f"{context}: campo '{field}' deve ser numérico."
-        ) from error
+        raise CapacityError(f"{context}: campo '{field}' deve ser numérico.") from error
     if not parsed.is_finite():
         raise CapacityError(f"{context}: campo '{field}' deve ser um número finito.")
     return parsed
