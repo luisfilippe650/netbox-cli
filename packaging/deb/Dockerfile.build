@@ -1,0 +1,100 @@
+FROM ubuntu:20.04 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG PYTHON_VERSION=3.11.15
+ARG PYTHON_SHA256=272179ddd9a2e41a0fc8e42e33dfbdca0b3711aa5abf372d3f2d51543d09b625
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        binutils \
+        build-essential \
+        bzip2 \
+        ca-certificates \
+        curl \
+        dpkg-dev \
+        libbz2-dev \
+        libffi-dev \
+        libgdbm-dev \
+        liblzma-dev \
+        libncursesw5-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        tk-dev \
+        uuid-dev \
+        xz-utils \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eu; \
+    curl --fail --location --show-error \
+        "https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tar.xz" \
+        --output /tmp/python.tar.xz; \
+    echo "$PYTHON_SHA256  /tmp/python.tar.xz" | sha256sum --check --strict; \
+    mkdir -p /usr/src/python; \
+    tar --extract --directory /usr/src/python --strip-components=1 \
+        --file /tmp/python.tar.xz; \
+    cd /usr/src/python; \
+    ./configure \
+        --prefix=/opt/python \
+        --enable-shared \
+        --with-ensurepip=install; \
+    make -j"$(nproc)"; \
+    make install; \
+    rm -rf /tmp/python.tar.xz /usr/src/python
+
+ENV PATH="/opt/python/bin:$PATH"
+ENV LD_LIBRARY_PATH="/opt/python/lib"
+
+WORKDIR /source
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY packaging/deb/constraints.txt ./packaging/deb/constraints.txt
+COPY packaging/deb/netbox.spec ./packaging/deb/netbox.spec
+
+RUN python3.11 -m venv /build/venv \
+    && /build/venv/bin/python -m pip install \
+        --no-cache-dir \
+        --constraint packaging/deb/constraints.txt \
+        --upgrade pip setuptools wheel \
+    && /build/venv/bin/python -m pip install \
+        --no-build-isolation \
+        --no-cache-dir \
+        --constraint packaging/deb/constraints.txt \
+        . pyinstaller \
+    && /build/venv/bin/pyinstaller \
+        --clean \
+        --noconfirm \
+        --distpath /build/pyinstaller \
+        --workpath /build/work \
+        packaging/deb/netbox.spec
+
+RUN set -eu; \
+    version="$(/build/venv/bin/python -c 'from netbox_cli import __version__; print(__version__)')"; \
+    architecture="$(dpkg --print-architecture)"; \
+    package_root="/build/package"; \
+    install -d \
+        "$package_root/DEBIAN" \
+        "$package_root/usr/bin" \
+        "$package_root/usr/lib/netbox-cli"; \
+    cp -a /build/pyinstaller/netbox/. "$package_root/usr/lib/netbox-cli/"; \
+    ln -s ../lib/netbox-cli/netbox "$package_root/usr/bin/netbox"; \
+    installed_size="$(du -sk "$package_root/usr" | cut -f1)"; \
+    printf '%s\n' \
+        'Package: netbox-cli' \
+        "Version: $version" \
+        'Section: admin' \
+        'Priority: optional' \
+        "Architecture: $architecture" \
+        'Depends: libc6 (>= 2.31)' \
+        "Installed-Size: $installed_size" \
+        'Maintainer: NetBox CLI Maintainers' \
+        'Description: CLI interativa e automatizavel para o NetBox' \
+        ' Interface de linha de comando para administrar inventario fisico,' \
+        ' executar consultas operacionais e automatizar tarefas no NetBox.' \
+        > "$package_root/DEBIAN/control"; \
+    install -d /out; \
+    dpkg-deb --root-owner-group --build \
+        "$package_root" \
+        "/out/netbox-cli_${version}_${architecture}.deb"

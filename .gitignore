@@ -1,8 +1,32 @@
+# Ambientes e segredos locais
 .env
+.env.*
+!.env.example
 .venv/
+venv/
+
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
 *.egg-info/
-dist/
+
+# Testes, cobertura e ferramentas
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Artefatos de build e empacotamento
 build/
+dist/
+*.deb
+*.whl
+
+# Editores e sistema operacional
+.idea/
+.vscode/
+*~
+.DS_Store

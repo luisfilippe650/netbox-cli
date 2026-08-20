@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "CLI interativa e automatizável para o NetBox"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,9 @@ netbox = "netbox_cli.app:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "netbox_cli.__version__"}
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

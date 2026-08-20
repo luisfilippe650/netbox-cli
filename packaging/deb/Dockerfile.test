@@ -1,0 +1,16 @@
+ARG UBUNTU_VERSION=20.04
+FROM ubuntu:${UBUNTU_VERSION}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+COPY netbox-cli.deb /tmp/netbox-cli.deb
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/netbox-cli.deb \
+    && netbox --help \
+    && netbox tree --help \
+    && test "$(readlink -f /usr/bin/netbox)" = "/usr/lib/netbox-cli/netbox" \
+    && rm -f /tmp/netbox-cli.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["netbox", "--help"]
