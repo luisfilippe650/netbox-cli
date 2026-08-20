@@ -1,9 +1,40 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
-from netbox_cli.client import NetBoxClient
-from netbox_cli.service.lookup import get_by_name, get_result_list
+from netbox_cli.client import NetBoxClient, get_all_results
+from netbox_cli.service.lookup import get_by_name
+
+
+@dataclass(slots=True)
+class TreeNode:
+    type: str
+    id: object
+    name: str
+    children: list[TreeNode] = field(default_factory=list)
+    position: object | None = None
+    status: object | None = None
+
+    def add(self, child: TreeNode) -> None:
+        self.children.append(child)
+
+    def sort(self) -> None:
+        self.children.sort(key=lambda item: item.name.casefold())
+        for child in self.children:
+            child.sort()
+
+    def as_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "type": self.type,
+            "id": self.id,
+            "name": self.name,
+            "children": [child.as_dict() for child in self.children],
+        }
+        if self.type == "device":
+            result["position"] = self.position
+            result["status"] = self.status
+        return result
 
 
 class InfrastructureService:
@@ -30,7 +61,7 @@ class InfrastructureService:
             )
             site_id = site["id"]
             resources = {
-                "region": self._list("region"),
+                "region": self._region_ancestry(site),
                 "site": [site],
                 "location": self._list("location", site_id=site_id),
                 "rack": self._list("rack", site_id=site_id),
@@ -38,10 +69,10 @@ class InfrastructureService:
             }
         else:
             resources = {kind: self._list(kind) for kind in self.ENDPOINTS}
-        root = _node("root", None, "NetBox")
+        root = TreeNode("root", None, "NetBox")
         nodes = {
             kind: {
-                item["id"]: _node(kind, item.get("id"), _name(item), source=item)
+                item["id"]: _node(kind, item)
                 for item in items
                 if item.get("id") is not None
             }
@@ -53,17 +84,17 @@ class InfrastructureService:
             if not region_node:
                 continue
             parent = nodes["region"].get(_id(item.get("parent")), root)
-            parent["children"].append(region_node)
-        orphan_region = _node("group", None, "Sem região")
+            parent.add(region_node)
+        orphan_region = TreeNode("group", None, "Sem região")
         for item in resources["site"]:
             site_node = nodes["site"].get(item.get("id"))
             if not site_node:
                 continue
             region_id = _id(item.get("region"))
             parent = nodes["region"].get(region_id, orphan_region)
-            parent["children"].append(site_node)
-        if orphan_region["children"]:
-            root["children"].append(orphan_region)
+            parent.add(site_node)
+        if orphan_region.children:
+            root.add(orphan_region)
 
         for item in resources["location"]:
             location_node = nodes["location"].get(item.get("id"))
@@ -73,7 +104,7 @@ class InfrastructureService:
             parent = nodes["location"].get(parent_id)
             if parent is None:
                 parent = nodes["site"].get(_id(item.get("site")), root)
-            parent["children"].append(location_node)
+            parent.add(location_node)
 
         for item in resources["rack"]:
             rack_node = nodes["rack"].get(item.get("id"))
@@ -82,7 +113,7 @@ class InfrastructureService:
             parent = nodes["location"].get(_id(item.get("location")))
             if parent is None:
                 parent = nodes["site"].get(_id(item.get("site")), root)
-            parent["children"].append(rack_node)
+            parent.add(rack_node)
 
         for item in resources["device"]:
             device_node = nodes["device"].get(item.get("id"))
@@ -93,38 +124,47 @@ class InfrastructureService:
                 parent = nodes["location"].get(_id(item.get("location")))
             if parent is None:
                 parent = nodes["site"].get(_id(item.get("site")), root)
-            parent["children"].append(device_node)
+            parent.add(device_node)
 
-        _sort_tree(root)
-        root["counts"] = {kind + "s": len(items) for kind, items in resources.items()}
-        return root
+        root.sort()
+        result = root.as_dict()
+        result["counts"] = {kind + "s": len(items) for kind, items in resources.items()}
+        return result
 
     def _list(self, kind: str, **filters: Any) -> list[dict[str, Any]]:
-        return get_result_list(
-            self.client.get(
-                self.ENDPOINTS[kind], params={**filters, "limit": 0}
-            )
+        return get_all_results(
+            self.client,
+            self.ENDPOINTS[kind],
+            params={**filters, "limit": 0},
         )
 
+    def _region_ancestry(self, site: dict[str, Any]) -> list[dict[str, Any]]:
+        region_id = _id(site.get("region"))
+        regions = []
+        visited = set()
+        while region_id is not None and region_id not in visited:
+            visited.add(region_id)
+            region = self.client.get(f"{self.ENDPOINTS['region']}{region_id}/")
+            if not isinstance(region, dict):
+                break
+            regions.append(region)
+            region_id = _id(region.get("parent"))
+        return regions
 
-def _node(
-    kind: str,
-    item_id: object,
-    name: str,
-    *,
-    source: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    node: dict[str, Any] = {
-        "type": kind,
-        "id": item_id,
-        "name": name,
-        "children": [],
-    }
-    if kind == "device" and source:
-        node["position"] = source.get("position")
-        status = source.get("status")
-        node["status"] = status.get("label") if isinstance(status, dict) else status
-    return node
+
+def _node(kind: str, item: dict[str, Any]) -> TreeNode:
+    status = item.get("status")
+    return TreeNode(
+        type=kind,
+        id=item.get("id"),
+        name=_name(item),
+        position=item.get("position") if kind == "device" else None,
+        status=(
+            (status.get("label") if isinstance(status, dict) else status)
+            if kind == "device"
+            else None
+        ),
+    )
 
 
 def _id(value: Any) -> Any:
@@ -133,10 +173,3 @@ def _id(value: Any) -> Any:
 
 def _name(item: dict[str, Any]) -> str:
     return str(item.get("name") or item.get("display") or item.get("id"))
-
-
-def _sort_tree(node: dict[str, Any]) -> None:
-    children = node.get("children", [])
-    children.sort(key=lambda item: str(item.get("name", "")).casefold())
-    for child in children:
-        _sort_tree(child)

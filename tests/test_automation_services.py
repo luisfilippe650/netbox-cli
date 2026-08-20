@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from netbox_cli.client import NetBoxClientError
+from netbox_cli.client.netbox_client import NetBoxClient
+from netbox_cli.config import ConfigurationError, ConfigStore, Settings
 from typer.testing import CliRunner
 
 from netbox_cli.app import app
@@ -18,7 +21,12 @@ from netbox_cli.presentation.details import (
 from netbox_cli.service.devices.devices_service import DevicesService
 from netbox_cli.service.infrastructure_service import InfrastructureService
 from netbox_cli.service.inventory_service import InventoryFilterError, InventoryService
-from netbox_cli.service.lookup import ResourceNotFoundError, get_by_name, get_scoped_rack
+from netbox_cli.service.lookup import (
+    ResourceNotFoundError,
+    get_all_results,
+    get_by_name,
+    get_scoped_rack,
+)
 from netbox_cli.service.organization.sites_service import SitesService
 from netbox_cli.service.racks.racks_service import RacksService
 from netbox_cli.service.search_service import SearchService
@@ -84,9 +92,7 @@ def test_inspect_combines_device_interfaces_and_ips() -> None:
     assert result["interfaces"][0]["name"] == "eth0"
     assert result["interfaces"][0]["connected_device"] == "Switch-01"
     assert result["interfaces"][0]["connected_interface"] == "Gi0/12"
-    assert result["ip_addresses"] == [
-        {"interface": "eth0", "address": "10.10.0.23/24"}
-    ]
+    assert result["ip_addresses"] == [{"interface": "eth0", "address": "10.10.0.23/24"}]
     assert client.calls[1][2] == {"device_id": 7, "limit": 0}
 
 
@@ -243,6 +249,7 @@ def test_available_positions_require_contiguous_free_units() -> None:
                 {"id": "4.0", "occupied": False},
                 {"id": "4.5", "occupied": False},
             ),
+            page(),
         ]
     )
 
@@ -320,9 +327,7 @@ def test_trace_normalizes_cable_path() -> None:
         ]
     )
 
-    result = DevicesService(client).trace(  # type: ignore[arg-type]
-        "Server-01", "eth0"
-    )
+    result = DevicesService(client).trace("Server-01", "eth0")  # type: ignore[arg-type]
 
     assert result["connected"] is True
     assert result["segments"][0]["far"][0]["device"] == "Switch-01"
@@ -345,9 +350,7 @@ def test_inventory_csv_has_stable_header(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_status_distinguishes_reachable_url_from_invalid_token() -> None:
-    client = FakeClient(
-        [NetBoxClientError("Invalid token", status_code=403)]
-    )
+    client = FakeClient([NetBoxClientError("Invalid token", status_code=403)])
 
     result = StatusService(  # type: ignore[arg-type]
         client, url="http://localhost:8000", token_configured=True
@@ -383,6 +386,7 @@ def test_rack_capacity_consolidates_front_and_rear_units() -> None:
                 {"id": "2.0", "occupied": True},
                 {"id": "2.5", "occupied": True},
             ),
+            page(),
         ]
     )
 
@@ -394,6 +398,47 @@ def test_rack_capacity_consolidates_front_and_rear_units() -> None:
     assert result["occupancy_percent"] == 50
     assert result["front"]["occupied_u"] == 1
     assert result["rear"]["occupied_u"] == 1.5
+
+
+def test_rack_capacity_counts_reservations_on_both_faces() -> None:
+    client = FakeClient(
+        [
+            page({"id": 4, "name": "RACK-04", "u_height": 4}),
+            page(),
+            page(),
+            page({"id": 30, "rack": {"id": 4}, "units": [2]}),
+        ]
+    )
+
+    result = RacksService(client).capacity("RACK-04")  # type: ignore[arg-type]
+
+    assert result["occupied_u"] == 1
+    assert result["free_u"] == 3
+    assert result["front"]["occupied_u"] == 1
+    assert result["rear"]["occupied_u"] == 1
+
+
+def test_available_positions_exclude_reserved_units() -> None:
+    client = FakeClient(
+        [
+            page(
+                {
+                    "id": 4,
+                    "name": "RACK-04",
+                    "u_height": 4,
+                    "starting_unit": 1,
+                }
+            ),
+            page(),
+            page({"id": 30, "rack": {"id": 4}, "units": [2]}),
+        ]
+    )
+
+    result = RacksService(client).available(  # type: ignore[arg-type]
+        "RACK-04", height=1
+    )
+
+    assert result["positions"] == [1.0, 3.0, 3.5, 4.0]
 
 
 def test_site_status_aggregates_capacity_and_manufacturers() -> None:
@@ -553,7 +598,9 @@ def test_scoped_rack_uses_site_and_location_ids() -> None:
     }
 
 
-def test_rack_render_uses_starting_unit_and_half_unit(capsys: pytest.CaptureFixture[str]) -> None:
+def test_rack_render_uses_starting_unit_and_half_unit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     render_rack(
         {
             "name": "RACK-10",
@@ -649,7 +696,7 @@ def test_tree_site_scope_filters_large_resource_collections() -> None:
     client = FakeClient(
         [
             page({"id": 2, "name": "CPTEC", "region": {"id": 1}}),
-            page({"id": 1, "name": "Sudeste"}),
+            {"id": 1, "name": "Sudeste", "parent": None},
             page(),
             page(),
             page(),
@@ -661,6 +708,139 @@ def test_tree_site_scope_filters_large_resource_collections() -> None:
     )
 
     assert result["counts"]["sites"] == 1
+    assert [region["name"] for region in result["children"]] == ["Sudeste"]
+    assert result["children"][0]["children"][0]["name"] == "CPTEC"
     assert client.calls[2][2] == {"site_id": 2, "limit": 0}
     assert client.calls[3][2] == {"site_id": 2, "limit": 0}
     assert client.calls[4][2] == {"site_id": 2, "limit": 0}
+
+
+def test_all_results_follows_every_pagination_link() -> None:
+    next_url = "http://netbox.local/api/dcim/devices/?limit=1000&offset=1000"
+    client = FakeClient(
+        [
+            {
+                "count": 2,
+                "next": next_url,
+                "results": [{"id": 1, "name": "A"}],
+            },
+            {
+                "count": 2,
+                "next": None,
+                "results": [{"id": 2, "name": "B"}],
+            },
+        ]
+    )
+
+    results = get_all_results(  # type: ignore[arg-type]
+        client, "/api/dcim/devices/", params={"limit": 0}
+    )
+
+    assert [item["id"] for item in results] == [1, 2]
+    assert client.calls == [
+        ("GET", "/api/dcim/devices/", {"limit": 0}),
+        ("GET", next_url, None),
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["rack-groups", "racks", "manufacturers", "device-types", "devices"],
+)
+def test_all_commands_request_every_page_by_default(command: str) -> None:
+    result = CliRunner().invoke(app, [command, "all", "--help"])
+
+    assert result.exit_code == 0
+    assert "[default: 0]" in result.stdout
+
+
+def test_client_rejects_pagination_url_from_another_origin() -> None:
+    client = NetBoxClient("https://netbox.local", token="secret")
+    try:
+        with pytest.raises(NetBoxClientError, match="origem inesperada"):
+            client.get("https://attacker.invalid/api/dcim/devices/?offset=1000")
+    finally:
+        client.close()
+
+
+def test_config_treats_null_token_as_empty() -> None:
+    settings = ConfigStore._parse(
+        {"url": "https://netbox.local", "token": None, "timeout": 15}
+    )
+
+    assert settings.token == ""
+
+
+def test_saved_token_is_bound_to_current_url(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "config.yaml")
+    store.save(Settings(url="https://netbox-a.local"))
+
+    settings = store.save_token("secret")
+
+    assert settings.token == "secret"
+    assert settings.token_url == "https://netbox-a.local"
+
+
+def test_config_store_refuses_to_persist_token_for_another_url(
+    tmp_path: Path,
+) -> None:
+    store = ConfigStore(tmp_path / "config.yaml")
+
+    with pytest.raises(ConfigurationError, match="não pertence"):
+        store.save(
+            Settings(
+                url="https://netbox-b.local",
+                token="secret-from-a",
+                token_url="https://netbox-a.local",
+            )
+        )
+
+
+def test_manual_url_change_invalidates_token_before_use(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "url: https://netbox-b.local\n"
+        "token: secret-from-a\n"
+        "token_url: https://netbox-a.local\n"
+        "timeout: 15\n",
+        encoding="utf-8",
+    )
+    store = ConfigStore(path)
+
+    settings = store.load()
+
+    assert settings.url == "https://netbox-b.local"
+    assert settings.token == ""
+    assert settings.token_url == ""
+    with pytest.raises(ConfigurationError, match="Token não configurado"):
+        store.load(require_token=True)
+
+
+def test_legacy_token_without_origin_is_invalidated(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "url: https://netbox.local\n" "token: legacy-secret\n" "timeout: 15\n",
+        encoding="utf-8",
+    )
+
+    settings = ConfigStore(path).load()
+
+    assert settings.token == ""
+    assert settings.token_url == ""
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ({"url": None}, "url deve ser um texto"),
+        ({"url": "netbox.local"}, "URL HTTP ou HTTPS"),
+        ({"timeout": float("nan")}, "finito"),
+        ({"timeout": float("inf")}, "finito"),
+        ({"timeout": True}, "número"),
+    ],
+)
+def test_config_rejects_invalid_scalar_values(
+    raw: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        ConfigStore._parse(raw)

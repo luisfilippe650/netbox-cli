@@ -4,7 +4,8 @@ from typing import Any
 
 from netbox_cli.client.netbox_client import NetBoxClient
 from netbox_cli.exceptions import NetBoxCLIError
-from netbox_cli.service.lookup import get_by_name, get_result_list, get_scoped_rack
+from netbox_cli.client.pagination import get_all_results
+from netbox_cli.service.lookup import get_by_name, get_scoped_rack
 
 
 class InventoryFilterError(NetBoxCLIError):
@@ -52,8 +53,12 @@ class InventoryService:
             filter_value = resource.get("name", rack_name)
             params = {"rack_id": resource["id"], "limit": 0}
 
-        response = self.client.get(self.DEVICES_ENDPOINT, params=params)
-        devices = [self._normalize(item) for item in get_result_list(response)]
+        devices = [
+            self._normalize(item)
+            for item in get_all_results(
+                self.client, self.DEVICES_ENDPOINT, params=params
+            )
+        ]
         return {
             "filter": {"type": filter_type, "value": filter_value},
             "count": len(devices),

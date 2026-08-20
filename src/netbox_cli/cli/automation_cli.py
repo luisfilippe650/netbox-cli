@@ -81,9 +81,7 @@ def trace(
 ) -> None:
     """Rastreia o caminho físico de uma interface através dos cabos."""
     result = execute_operation(
-        lambda: make_service(DevicesService).trace(
-            device, interface, site_name=site
-        )
+        lambda: make_service(DevicesService).trace(device, interface, site_name=site)
     )
     render_trace(result, output)
 

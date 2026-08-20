@@ -1,8 +1,16 @@
-from netbox_cli.exceptions import NetBoxCLIError
+from decimal import Decimal
+
+from netbox_cli.client.pagination import get_all_results
 from netbox_cli.schemas.racks import AddRack
 from netbox_cli.service.base_service import CRUDService
-from netbox_cli.service.capacity import rack_capacity
-from netbox_cli.service.lookup import get_result_list, get_scoped_rack
+from netbox_cli.service.capacity import rack_capacity, rack_occupancy
+from netbox_cli.service.capacity_types import (
+    CapacityError,
+    RackFace,
+    RackSpec,
+    decimal_value,
+)
+from netbox_cli.service.lookup import get_scoped_rack
 
 
 class RacksService(CRUDService[AddRack]):
@@ -43,19 +51,21 @@ class RacksService(CRUDService[AddRack]):
             site_name=site_name,
             location_name=location_name,
         )
-        response = self.client.get(
-            f"{self.ENDPOINT}{rack['id']}/elevation/",
-            params={"face": face, "limit": 0},
+        rack_spec = RackSpec.from_api(rack)
+        requested_face = RackFace.parse(face, context="Elevação do rack")
+        units = get_all_results(
+            self.client,
+            f"{self.ENDPOINT}{rack_spec.id}/elevation/",
+            params={"face": requested_face.value, "limit": 0},
         )
-        units = get_result_list(response)
         return {
             "id": rack.get("id"),
             "name": rack.get("name") or rack.get("display"),
             "site": _value(rack.get("site")),
             "location": _value(rack.get("location")),
-            "face": face,
-            "u_height": rack.get("u_height"),
-            "starting_unit": rack.get("starting_unit", 1),
+            "face": requested_face.value,
+            "u_height": _number(rack_spec.height),
+            "starting_unit": _number(rack_spec.starting_unit),
             "units": units,
         }
 
@@ -68,37 +78,42 @@ class RacksService(CRUDService[AddRack]):
         site_name: str | None = None,
         location_name: str | None = None,
     ) -> dict[str, object]:
-        if height < 0.5 or (height * 2) % 1:
-            raise NetBoxCLIError("--height deve ser múltiplo de 0.5 e maior que zero.")
+        requested_height = decimal_value(
+            height, field="height", context="Consulta de disponibilidade"
+        )
+        if requested_height < Decimal("0.5") or requested_height % Decimal("0.5"):
+            raise CapacityError(
+                "Consulta de disponibilidade: height deve ser múltiplo de 0.5 "
+                "e maior que zero."
+            )
+        requested_face = RackFace.parse(face, context="Consulta de disponibilidade")
 
-        elevation = self.elevation(
+        rack = get_scoped_rack(
+            self.client,
             name,
-            face=face,
             site_name=site_name,
             location_name=location_name,
         )
-        units = elevation["units"]
-        occupied = {
-            float(unit["id"])
-            for unit in units
-            if isinstance(unit, dict)
-            and unit.get("occupied")
-            and _is_number(unit.get("id"))
-        }
-        starting_unit = float(elevation.get("starting_unit") or 1)
-        top_half_unit = starting_unit + float(elevation.get("u_height") or 0) - 0.5
-        required_slots = int(height * 2)
-        candidates = []
-        position = starting_unit
-        while position + height - 0.5 <= top_half_unit:
-            slots = {position + offset * 0.5 for offset in range(required_slots)}
+        rack_spec = RackSpec.from_api(rack)
+        occupied = rack_occupancy(
+            self.client, rack, faces=(requested_face.value,)
+        )[requested_face.value]
+        top_half_unit = rack_spec.starting_unit + rack_spec.height - Decimal("0.5")
+        required_slots = int(requested_height / Decimal("0.5"))
+        candidates: list[int | float] = []
+        position = rack_spec.starting_unit
+        while position + requested_height - Decimal("0.5") <= top_half_unit:
+            slots = {
+                position + Decimal("0.5") * offset
+                for offset in range(required_slots)
+            }
             if not slots.intersection(occupied):
-                candidates.append(position)
-            position += 0.5
+                candidates.append(float(position))
+            position += Decimal("0.5")
         return {
-            "rack": elevation["name"],
-            "face": face,
-            "height": height,
+            "rack": rack.get("name") or rack.get("display"),
+            "face": requested_face.value,
+            "height": _number(requested_height),
             "count": len(candidates),
             "positions": candidates,
         }
@@ -110,9 +125,5 @@ def _value(value: object) -> object:
     return value
 
 
-def _is_number(value: object) -> bool:
-    try:
-        float(str(value))
-    except (TypeError, ValueError):
-        return False
-    return True
+def _number(value: Decimal) -> int | float:
+    return int(value) if value == value.to_integral_value() else float(value)

@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 from pydantic import BaseModel
 
 from netbox_cli.client.netbox_client import NetBoxClient
+from netbox_cli.client.pagination import get_all_results
 
 CreateModel = TypeVar("CreateModel", bound=BaseModel)
 
@@ -41,6 +42,14 @@ class CRUDService(Generic[CreateModel]):
             params["q"] = search
         if limit is not None:
             params["limit"] = limit
+        if limit == 0:
+            results = get_all_results(self.client, self.ENDPOINT, params=params)
+            return {
+                "count": len(results),
+                "next": None,
+                "previous": None,
+                "results": results,
+            }
         return self.client.get(self.ENDPOINT, params=params or None)
 
     def get(self, item_id: int) -> dict[str, Any]:

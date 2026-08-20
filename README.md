@@ -34,11 +34,13 @@ inicial:
 ```yaml
 url: http://localhost:8000
 token: ''
+token_url: ''
 timeout: 15
 ```
 
-URL e timeout podem ser alterados diretamente nesse arquivo. Os comandos de
-linha direta reutilizam o token salvo pelo login visual.
+URL e timeout podem ser alterados diretamente nesse arquivo. O token é vinculado
+à URL em que o login foi realizado; se a URL for alterada, ele é invalidado antes
+de qualquer requisição e um novo login será necessário.
 
 ## Interface visual
 

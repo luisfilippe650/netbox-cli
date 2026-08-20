@@ -40,11 +40,7 @@ class SearchService:
         for field in ("rack", "site", "location", "status"):
             value = item.get(field)
             if isinstance(value, dict):
-                value = (
-                    value.get("name")
-                    or value.get("label")
-                    or value.get("display")
-                )
+                value = value.get("name") or value.get("label") or value.get("display")
             if value is not None:
                 result[field] = value
 

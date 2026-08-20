@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import asdict, dataclass, replace
+from math import isfinite
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
-
 
 DEFAULT_URL = "http://localhost:8000"
 DEFAULT_TIMEOUT = 15
@@ -27,6 +29,7 @@ def default_config_path() -> Path:
 class Settings:
     url: str = DEFAULT_URL
     token: str = ""
+    token_url: str = ""
     timeout: float = DEFAULT_TIMEOUT
 
     # Mantém compatibilidade com os nomes usados pelo cliente atual.
@@ -56,17 +59,10 @@ class ConfigStore:
 
     def load(self, *, require_token: bool = False) -> Settings:
         self.ensure_exists()
-        try:
-            raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError) as error:
-            raise ConfigurationError(
-                f"Não foi possível ler {self.path}: {error}"
-            ) from error
-
-        if not isinstance(raw, dict):
-            raise ConfigurationError(f"O arquivo {self.path} deve conter um mapa YAML")
-
-        settings = self._parse(raw)
+        settings = self._parse(self._read_mapping())
+        settings, migrated = self._enforce_token_origin(settings)
+        if migrated:
+            self.save(settings)
         if require_token and not settings.token:
             raise ConfigurationError(
                 "Token não configurado. Execute 'netbox' para fazer login."
@@ -74,38 +70,151 @@ class ConfigStore:
         return settings
 
     def save(self, settings: Settings) -> None:
+        settings = self._validated_for_save(settings)
+        serialized = yaml.safe_dump(
+            asdict(settings), sort_keys=False, allow_unicode=True
+        )
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.path.parent.chmod(0o700)
-            self.path.write_text(
-                yaml.safe_dump(asdict(settings), sort_keys=False, allow_unicode=True),
-                encoding="utf-8",
-            )
-            self.path.chmod(0o600)
+            self._atomic_write(serialized)
         except OSError as error:
             raise ConfigurationError(
                 f"Não foi possível salvar {self.path}: {error}"
             ) from error
 
+    def _read_mapping(self) -> dict[str, Any]:
+        try:
+            raw = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as error:
+            raise ConfigurationError(
+                f"Não foi possível ler {self.path}: {error}"
+            ) from error
+        if not isinstance(raw, dict):
+            raise ConfigurationError(f"O arquivo {self.path} deve conter um mapa YAML")
+        return raw
+
+    @staticmethod
+    def _enforce_token_origin(settings: Settings) -> tuple[Settings, bool]:
+        if settings.token and settings.token_url != settings.url:
+            # Sem uma origem comprovada, o segredo não pode chegar ao cliente HTTP.
+            return replace(settings, token="", token_url=""), True
+        if not settings.token and settings.token_url:
+            return replace(settings, token_url=""), True
+        return settings, False
+
+    @classmethod
+    def _validated_for_save(cls, settings: Settings) -> Settings:
+        settings = cls._parse(asdict(settings))
+        if settings.token and settings.token_url != settings.url:
+            raise ConfigurationError("token não pertence à URL configurada")
+        return replace(settings, token_url="") if not settings.token else settings
+
+    def _atomic_write(self, content: str) -> None:
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                delete=False,
+            ) as temporary:
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                temporary_path = Path(temporary.name)
+            temporary_path.chmod(0o600)
+            os.replace(temporary_path, self.path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
+
     def save_token(self, token: str) -> Settings:
-        settings = replace(self.load(), token=token.strip())
+        settings = self.load()
+        normalized_token = token.strip()
+        settings = replace(
+            settings,
+            token=normalized_token,
+            token_url=settings.url if normalized_token else "",
+        )
+        self.save(settings)
+        return settings
+
+    def clear_token(self) -> Settings:
+        settings = replace(self.load(), token="", token_url="")
+        self.save(settings)
+        return settings
+
+    def save_url(self, url: str) -> Settings:
+        settings = self.load()
+        normalized_url = _validated_url(url, field_name="url")
+        if normalized_url != settings.url:
+            settings = replace(
+                settings,
+                url=normalized_url,
+                token="",
+                token_url="",
+            )
         self.save(settings)
         return settings
 
     @staticmethod
     def _parse(raw: dict[str, Any]) -> Settings:
-        url = str(raw.get("url", DEFAULT_URL)).strip()
-        token = str(raw.get("token", "")).strip()
+        raw_url = raw.get("url", DEFAULT_URL)
+        raw_token = raw.get("token", "")
+        raw_token_url = raw.get("token_url", "")
+        if not isinstance(raw_url, str):
+            raise ConfigurationError("url deve ser um texto")
+        if raw_token is not None and not isinstance(raw_token, str):
+            raise ConfigurationError("token deve ser um texto")
+        if raw_token_url is not None and not isinstance(raw_token_url, str):
+            raise ConfigurationError("token_url deve ser um texto")
+
+        url = _validated_url(raw_url, field_name="url")
+        token = raw_token.strip() if isinstance(raw_token, str) else ""
+        token_url = (
+            _validated_url(raw_token_url, field_name="token_url")
+            if raw_token_url
+            else ""
+        )
         try:
-            parsed_timeout = float(raw.get("timeout", DEFAULT_TIMEOUT))
+            raw_timeout = raw.get("timeout", DEFAULT_TIMEOUT)
+            if isinstance(raw_timeout, bool):
+                raise TypeError
+            parsed_timeout = float(raw_timeout)
         except (TypeError, ValueError) as error:
             raise ConfigurationError("timeout deve ser um número") from error
 
-        if not url:
-            raise ConfigurationError("url não pode ficar vazia")
-        if parsed_timeout <= 0:
-            raise ConfigurationError("timeout deve ser maior que zero")
-        timeout = (
-            int(parsed_timeout) if parsed_timeout.is_integer() else parsed_timeout
+        if not isfinite(parsed_timeout) or parsed_timeout <= 0:
+            raise ConfigurationError("timeout deve ser um número finito maior que zero")
+        timeout = int(parsed_timeout) if parsed_timeout.is_integer() else parsed_timeout
+        return Settings(
+            url=url,
+            token=token,
+            token_url=token_url,
+            timeout=timeout,
         )
-        return Settings(url=url.rstrip("/"), token=token, timeout=timeout)
+
+
+def _validated_url(value: str, *, field_name: str) -> str:
+    normalized = value.strip().rstrip("/")
+    if not normalized:
+        raise ConfigurationError(f"{field_name} não pode ficar vazia")
+    try:
+        parsed_url = urlsplit(normalized)
+        parsed_url.port
+    except ValueError as error:
+        raise ConfigurationError(
+            f"{field_name} deve ser uma URL HTTP ou HTTPS válida"
+        ) from error
+    if (
+        parsed_url.scheme not in {"http", "https"}
+        or not parsed_url.hostname
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        raise ConfigurationError(f"{field_name} deve ser uma URL HTTP ou HTTPS válida")
+    return normalized

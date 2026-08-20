@@ -52,14 +52,10 @@ def _header(settings: Settings, store: ConfigStore) -> None:
 
 
 def _change_url(store: ConfigStore, settings: Settings) -> None:
-    url = Prompt.ask("URL do NetBox", default=settings.url).strip().rstrip("/")
-    if not url.startswith(("http://", "https://")):
-        raise ConfigurationError("A URL deve começar com http:// ou https://")
-
-    token = settings.token if url == settings.url else ""
-    store.save(replace(settings, url=url, token=token))
+    url = Prompt.ask("URL do NetBox", default=settings.url)
+    updated = store.save_url(url)
     message = "URL atualizada."
-    if settings.token and not token:
+    if settings.token and not updated.token:
         message += " O token foi limpo; faça login no novo servidor."
     _success(message)
 
@@ -84,7 +80,7 @@ def _clear_token(store: ConfigStore, settings: Settings) -> None:
         selected=1,
     )
     if confirmation == "yes":
-        store.save(replace(settings, token=""))
+        store.clear_token()
         _success("Token removido. A sessão local foi encerrada.")
 
 

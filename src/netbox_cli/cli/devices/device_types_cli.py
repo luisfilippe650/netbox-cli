@@ -47,7 +47,7 @@ def get_device_type(
 @app.command("all")
 def all_device_types(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
-    limit: Annotated[int | None, typer.Option(min=0)] = None,
+    limit: Annotated[int | None, typer.Option(min=0)] = 0,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Lista tipos de dispositivos."""

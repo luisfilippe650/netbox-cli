@@ -7,7 +7,9 @@ from netbox_cli.service.auth_service import AuthenticationError, AuthService
 
 
 class StatusService:
-    def __init__(self, client: NetBoxClient, *, url: str, token_configured: bool) -> None:
+    def __init__(
+        self, client: NetBoxClient, *, url: str, token_configured: bool
+    ) -> None:
         self.client = client
         self.url = url
         self.token_configured = token_configured

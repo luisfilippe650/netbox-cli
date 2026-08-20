@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
@@ -53,7 +54,7 @@ class NetBoxClient:
         endpoint: str,
         **kwargs: Any,
     ) -> Any:
-        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        url = self._request_url(endpoint)
 
         try:
             response = self.session.request(
@@ -106,6 +107,31 @@ class NetBoxClient:
         except ValueError:
             return response.text
 
+    def _request_url(self, endpoint: str) -> str:
+        try:
+            parsed_endpoint = urlsplit(endpoint)
+        except ValueError as error:
+            raise NetBoxClientError(
+                "O NetBox retornou uma página de continuação inválida"
+            ) from error
+        if not parsed_endpoint.scheme and not parsed_endpoint.netloc:
+            return f"{self.base_url}/{endpoint.lstrip('/')}"
+
+        try:
+            parsed_base = urlsplit(self.base_url)
+            unexpected_origin = _origin(parsed_endpoint) != _origin(parsed_base)
+        except ValueError as error:
+            raise NetBoxClientError(
+                "O NetBox retornou uma página de continuação inválida"
+            ) from error
+        if parsed_endpoint.username is not None or parsed_endpoint.password is not None:
+            unexpected_origin = True
+        if unexpected_origin:
+            raise NetBoxClientError(
+                "O NetBox retornou uma página de continuação em uma origem inesperada"
+            )
+        return endpoint
+
     def get(
         self,
         endpoint: str,
@@ -132,3 +158,12 @@ class NetBoxClient:
 
     def close(self) -> None:
         self.session.close()
+
+
+def _origin(parsed_url: Any) -> tuple[str, str | None, int | None]:
+    default_port = 443 if parsed_url.scheme.lower() == "https" else 80
+    return (
+        parsed_url.scheme.lower(),
+        parsed_url.hostname,
+        parsed_url.port or default_port,
+    )

@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from netbox_cli.client.netbox_client import NetBoxClient
+from netbox_cli.client.pagination import (
+    PaginationError,
+    get_all_results,
+    get_result_list,
+)
 from netbox_cli.exceptions import NetBoxCLIError
 
 
@@ -14,13 +19,7 @@ class AmbiguousResourceError(NetBoxCLIError):
     """Mais de um recurso corresponde ao nome solicitado."""
 
 
-def get_result_list(response: Any) -> list[dict[str, Any]]:
-    if not isinstance(response, dict):
-        return []
-    results = response.get("results", [])
-    if not isinstance(results, list):
-        return []
-    return [item for item in results if isinstance(item, dict)]
+# Reexportações de compatibilidade. Código novo deve importar de ``client.pagination``.
 
 
 def get_by_name(
@@ -33,12 +32,12 @@ def get_by_name(
 ) -> dict[str, Any]:
     """Resolve nomes exatamente, sem escolher silenciosamente entre duplicatas."""
     params = {**(filters or {}), "name": name, "limit": 0}
-    results = get_result_list(client.get(endpoint, params=params))
+    results = get_all_results(client, endpoint, params=params)
     if not results:
         # Alguns filtros `name` do NetBox são case-sensitive. A busca geral
         # seguida da comparação local mantém a resolução exata sem exigir caixa.
         params = {**(filters or {}), "q": name, "limit": 0}
-        results = get_result_list(client.get(endpoint, params=params))
+        results = get_all_results(client, endpoint, params=params)
     exact = [
         item
         for item in results

@@ -69,7 +69,7 @@ def get_device(
 @app.command("all")
 def all_devices(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
-    limit: Annotated[int | None, typer.Option(min=0)] = None,
+    limit: Annotated[int | None, typer.Option(min=0)] = 0,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
 ) -> None:
     """Lista dispositivos."""
