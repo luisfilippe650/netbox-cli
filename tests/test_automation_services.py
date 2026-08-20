@@ -754,6 +754,64 @@ def test_invalid_rack_face_exits_before_api_call() -> None:
     assert "front" in result.output
 
 
+def test_rack_create_and_update_forward_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from netbox_cli.cli.racks import racks_cli
+
+    captured: dict[str, Any] = {}
+
+    def fake_create(service_class: type[Any], item: Any, **kwargs: Any) -> Any:
+        captured["create_service"] = service_class
+        captured["create_item"] = item
+        captured["create_options"] = kwargs
+        return {"id": 8, "name": item.name, "location": {"id": item.location}}
+
+    def fake_update(
+        service_class: type[Any], item_id: int, item: Any, **kwargs: Any
+    ) -> Any:
+        captured["update_service"] = service_class
+        captured["update_id"] = item_id
+        captured["update_item"] = item
+        return {"id": item_id, "location": {"id": item.location}}
+
+    monkeypatch.setattr(racks_cli, "create_resource", fake_create)
+    monkeypatch.setattr(racks_cli, "update_resource", fake_update)
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app,
+        [
+            "racks",
+            "post",
+            "--site",
+            "2",
+            "--name",
+            "R01",
+            "--width",
+            "19",
+            "--starting-unit",
+            "1",
+            "--u-height",
+            "42",
+            "--location",
+            "3",
+            "--ensure",
+        ],
+    )
+    updated = runner.invoke(app, ["racks", "update", "8", "--location", "4"])
+
+    assert created.exit_code == 0
+    assert updated.exit_code == 0
+    assert captured["create_service"] is RacksService
+    assert captured["create_item"].location == 3
+    assert captured["create_options"]["ensure"] is True
+    assert "location" in captured["create_options"]["update_fields"]
+    assert captured["update_service"] is RacksService
+    assert captured["update_id"] == 8
+    assert captured["update_item"].location == 4
+
+
 def test_tree_site_scope_filters_large_resource_collections() -> None:
     client = FakeClient(
         [

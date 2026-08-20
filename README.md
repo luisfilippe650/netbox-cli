@@ -41,7 +41,7 @@ O pacote `.deb` inclui o runtime necessário e instala o comando em
 virtual.
 
 ```bash
-sudo apt install ./dist/netbox-cli_0.1.0_amd64.deb
+sudo apt install ./dist/netbox-cli_0.1.1_amd64.deb
 netbox --help
 ```
 
@@ -619,6 +619,7 @@ netbox racks post \
   --width 19 \
   --starting-unit 1 \
   --u-height 42 \
+  --location 3 \
   --group 2 \
   --role 3 \
   --type 4 \
@@ -640,7 +641,7 @@ netbox --output json racks post \
 
 Campos obrigatórios: `--site`, `--name`, `--width`, `--starting-unit` e
 `--u-height`. Larguras aceitas: `10`, `19`, `21` e `23`. O status inicial é
-`active`. Grupo, função e tipo são IDs opcionais.
+`active`. Location, grupo, função e tipo são IDs opcionais.
 
 O `--ensure` identifica o rack por nome e site. Defaults de criação, como status,
 não sobrescrevem um rack existente quando não foram informados.
@@ -659,12 +660,14 @@ netbox racks all --output table
 
 ```bash
 netbox racks update 4 --name RACK-04A
+netbox racks update 4 --location 3
 netbox racks update 4 --u-height 48 --role 3
 netbox racks update 4 --u-height 48 --dry-run
 ```
 
 Campos disponíveis: `--site`, `--name`, `--width`, `--starting-unit`,
-`--u-height`, `--group`, `--role|--function` e `--type|--rack-type`.
+`--u-height`, `--location`, `--group`, `--role|--function` e
+`--type|--rack-type`.
 
 O update altera somente campos informados. O dry-run consulta o rack e mostra
 apenas as diferenças reais.
@@ -1062,6 +1065,7 @@ RACK_ID=$(
     --width 19 \
     --starting-unit 1 \
     --u-height 42 \
+    --location "$LOCATION_ID" \
     --ensure |
   jq -er '.resource.id'
 )
@@ -1069,9 +1073,9 @@ RACK_ID=$(
 echo "region=$REGION_ID site=$SITE_ID location=$LOCATION_ID rack=$RACK_ID"
 ```
 
-O cadastro de racks ainda não possui `--location`; portanto, a associação do rack
-ao local precisa existir previamente no NetBox ou ser feita por outra integração.
-O ID da location foi mantido no exemplo para os cadastros de dispositivos.
+O rack é associado à location criada anteriormente. Assim, dispositivos podem
+usar simultaneamente `--rack` e `--location` sem violar o escopo validado pelo
+NetBox.
 
 ### Cadastrar fabricante, tipo e dispositivo
 
@@ -1259,7 +1263,6 @@ A CLI não é uma interface genérica para todos os endpoints do NetBox. Ainda n
 há CRUD para:
 
 - funções de dispositivos e racks;
-- associação de um rack a uma location durante criação ou update;
 - interfaces;
 - endereços IP, prefixes, VLANs e VRFs;
 - cabos;

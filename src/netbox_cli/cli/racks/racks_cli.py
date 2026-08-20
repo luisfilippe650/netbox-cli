@@ -34,6 +34,9 @@ def post_rack(
     width: Annotated[int, typer.Option("--width", help="Largura: 10, 19, 21 ou 23.")],
     starting_unit: Annotated[int, typer.Option("--starting-unit", min=1)],
     u_height: Annotated[int, typer.Option("--u-height", min=1)],
+    location: Annotated[
+        int | None, typer.Option("--location", help="ID da location.", min=1)
+    ] = None,
     group: Annotated[int | None, typer.Option("--group", min=1)] = None,
     role: Annotated[
         int | None, typer.Option("--role", "--function", help="ID da função.", min=1)
@@ -57,6 +60,7 @@ def post_rack(
                 width=width,
                 starting_unit=starting_unit,
                 u_height=u_height,
+                location=location,
                 group=group,
                 role=role,
                 rack_type=rack_type,
@@ -67,7 +71,7 @@ def post_rack(
             update_fields=explicit_update_fields(
                 ctx,
                 required={"site", "name", "width", "starting_unit", "u_height"},
-                optional={"group", "role", "rack_type"},
+                optional={"location", "group", "role", "rack_type"},
             ),
         ),
         output=output,
@@ -108,6 +112,9 @@ def update_rack(
     width: Annotated[int | None, typer.Option("--width")] = None,
     starting_unit: Annotated[int | None, typer.Option("--starting-unit", min=1)] = None,
     u_height: Annotated[int | None, typer.Option("--u-height", min=1)] = None,
+    location: Annotated[
+        int | None, typer.Option("--location", help="ID da location.", min=1)
+    ] = None,
     group: Annotated[int | None, typer.Option("--group", min=1)] = None,
     role: Annotated[int | None, typer.Option("--role", "--function", min=1)] = None,
     rack_type: Annotated[
@@ -127,6 +134,7 @@ def update_rack(
                 width=width,
                 starting_unit=starting_unit,
                 u_height=u_height,
+                location=location,
                 group=group,
                 role=role,
                 rack_type=rack_type,

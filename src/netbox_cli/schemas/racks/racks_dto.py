@@ -14,6 +14,7 @@ class AddRack(BaseModel):
     starting_unit: int = Field(gt=0)
     u_height: int = Field(gt=0)
     status: Literal["active"] = "active"
+    location: int | None = Field(default=None, gt=0)
     group: int | None = Field(default=None, gt=0)
     role: int | None = Field(default=None, gt=0)
     rack_type: int | None = Field(default=None, gt=0)
@@ -27,6 +28,7 @@ class UpdateRack(BaseModel):
     width: RackWidth | None = None
     starting_unit: int | None = Field(default=None, gt=0)
     u_height: int | None = Field(default=None, gt=0)
+    location: int | None = Field(default=None, gt=0)
     group: int | None = Field(default=None, gt=0)
     role: int | None = Field(default=None, gt=0)
     rack_type: int | None = Field(default=None, gt=0)
