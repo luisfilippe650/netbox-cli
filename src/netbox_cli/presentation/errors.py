@@ -14,6 +14,8 @@ from netbox_cli.runtime import wants_json
 
 
 def _validation_message(error: ValidationError) -> str:
+    """Converte os erros de validação em uma mensagem legível por campo."""
+
     lines = []
     for item in error.errors(include_url=False):
         field = ".".join(str(part) for part in item["loc"]) or "dados"
@@ -22,6 +24,8 @@ def _validation_message(error: ValidationError) -> str:
 
 
 def show_error(error: Exception, *, console: Console | None = None) -> None:
+    """Apresenta uma exceção como JSON estruturado ou painel de terminal."""
+
     target = console or Console(stderr=True)
     title = "Erro"
     hint: str | None = None

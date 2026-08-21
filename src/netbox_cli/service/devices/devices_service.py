@@ -66,6 +66,7 @@ class DevicesService(CRUDService[AddDevice]):
     def build_payload(self, item: AddDevice) -> dict[str, Any]:
         payload = item.model_dump(mode="json", exclude_none=True)
         if item.position is not None:
+            payload["position"] = float(item.position)
             payload["face"] = "front"
         return payload
 

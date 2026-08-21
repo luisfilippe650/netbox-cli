@@ -13,6 +13,8 @@ from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_inventory(data: dict[str, Any], output: InventoryOutputFormat) -> None:
+    """Exibe um inventário de dispositivos em formato humano, JSON ou CSV."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -46,6 +48,8 @@ def render_inventory(data: dict[str, Any], output: InventoryOutputFormat) -> Non
 
 
 def _inventory_title(data: dict[str, Any]) -> str:
+    """Monta o título da tabela a partir do filtro aplicado ao inventário."""
+
     inventory_filter = data.get("filter", {})
     return (
         f"Inventário · {inventory_filter.get('type')}: {inventory_filter.get('value')}"

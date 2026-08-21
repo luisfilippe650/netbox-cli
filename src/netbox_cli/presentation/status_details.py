@@ -15,6 +15,8 @@ from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_search(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe resultados de busca com localização, IP e status dos recursos."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -47,6 +49,8 @@ def render_search(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_status(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe conectividade, autenticação e dados do usuário do NetBox."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -93,6 +97,8 @@ def render_status(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_site_status(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe capacidade e distribuição de dispositivos de um site."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -128,6 +134,8 @@ def render_site_status(data: dict[str, Any], output: DetailOutputFormat) -> None
 def render_infrastructure_tree(
     data: dict[str, Any], output: DetailOutputFormat
 ) -> None:
+    """Exibe regiões, sites, racks e dispositivos como árvore hierárquica."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -138,15 +146,21 @@ def render_infrastructure_tree(
 
 
 def _yes_no(value: bool) -> str:
+    """Representa um booleano como sim ou não com cores Rich."""
+
     return "[green]sim[/green]" if value else "[red]não[/red]"
 
 
 def _number(value: object) -> str:
+    """Formata posições numéricas sem casas decimais desnecessárias."""
+
     number = float(str(value))
     return str(int(number)) if number.is_integer() else str(number)
 
 
 def _add_tree_node(parent: Tree, node: dict[str, Any]) -> None:
+    """Adiciona recursivamente um nó e seus descendentes à árvore Rich."""
+
     styles = {
         "region": "bold magenta",
         "site": "bold green",
@@ -167,6 +181,8 @@ def _add_tree_node(parent: Tree, node: dict[str, Any]) -> None:
 
 
 def _tree_label(node: dict[str, Any], *, root: bool = False) -> str:
+    """Monta o rótulo Rich de um nó conforme seu tipo e seus atributos."""
+
     node_type = str(node.get("type") or "root")
     label = escape(str(node.get("name") or "NetBox"))
     if node_type == "connection":

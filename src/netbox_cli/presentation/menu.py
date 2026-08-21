@@ -20,6 +20,8 @@ class ChoiceMenu:
     """Menu Rich navegável por teclado, com fallback para entrada numerada."""
 
     def __init__(self, console: Console | None = None) -> None:
+        """Inicializa o menu com o console informado ou com um novo console."""
+
         self.console = console or Console()
 
     def ask(
@@ -29,6 +31,8 @@ class ChoiceMenu:
         *,
         selected: int = 0,
     ) -> str:
+        """Solicita uma escolha usando navegação interativa ou entrada numerada."""
+
         if not options:
             raise ValueError("O menu precisa ter ao menos uma opção")
         selected = max(0, min(selected, len(options) - 1))
@@ -43,6 +47,8 @@ class ChoiceMenu:
         options: list[MenuOption],
         selected: int,
     ) -> str:
+        """Captura as teclas de navegação e devolve o valor selecionado."""
+
         file_descriptor = sys.stdin.fileno()
         previous_settings = termios.tcgetattr(file_descriptor)
         try:
@@ -85,6 +91,8 @@ class ChoiceMenu:
         options: list[MenuOption],
         selected: int,
     ) -> str:
+        """Solicita o número de uma opção quando não há terminal interativo."""
+
         self.console.print(f"[bold]{title}[/bold]")
         for index, option in enumerate(options, start=1):
             self.console.print(f"  [cyan]{index}[/cyan]. {option.label}")
@@ -98,6 +106,8 @@ class ChoiceMenu:
 
     @staticmethod
     def _render(title: str, options: list[MenuOption], selected: int) -> Text:
+        """Constrói o conteúdo Rich do menu destacando a opção atual."""
+
         menu = Text(title, style="bold")
         menu.append("\n\n")
         for index, option in enumerate(options):

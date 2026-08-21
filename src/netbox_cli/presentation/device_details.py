@@ -13,6 +13,8 @@ from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_inspection(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe os detalhes, interfaces, IPs e componentes de um dispositivo."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -116,6 +118,8 @@ def render_inspection(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_trace(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe o caminho físico dos cabos conectados a uma interface."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -140,10 +144,14 @@ def render_trace(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def _number(value: object) -> str:
+    """Formata uma posição numérica sem manter casas decimais desnecessárias."""
+
     number = float(str(value))
     return str(int(number)) if number.is_integer() else str(number)
 
 
 def _termination_label(termination: dict[str, Any]) -> str:
+    """Monta o rótulo de uma terminação usando dispositivo e interface."""
+
     device = f"{termination.get('device')} " if termination.get("device") else ""
     return f"{device}{termination.get('name') or '—'}"

@@ -21,6 +21,8 @@ error_console = Console(stderr=True)
 
 
 def is_json_output(output: Enum | str) -> bool:
+    """Verifica se a saída efetiva é JSON, respeitando a opção global."""
+
     global_output = current_options().output
     if global_output is not None:
         return global_output == "json"
@@ -29,6 +31,8 @@ def is_json_output(output: Enum | str) -> bool:
 
 
 def _display_value(value: Any) -> str:
+    """Converte valores simples ou aninhados em texto adequado para tabelas."""
+
     if value is None:
         return ""
     if isinstance(value, dict):
@@ -39,6 +43,8 @@ def _display_value(value: Any) -> str:
 
 
 def render_json(data: Any) -> None:
+    """Serializa e escreve dados como JSON puro, indentado e em UTF-8."""
+
     # Mantém JSON puro para pipes e scripts, mas com leitura confortável no terminal.
     typer.echo(
         json.dumps(
@@ -51,6 +57,8 @@ def render_json(data: Any) -> None:
 
 
 def render_table(data: Any, *, title: str) -> None:
+    """Exibe dados em uma tabela Rich com as colunas mais relevantes."""
+
     rows = (
         data.get("results", [])
         if isinstance(data, dict) and "results" in data
@@ -98,6 +106,8 @@ def render_table(data: Any, *, title: str) -> None:
 
 
 def render(data: Any, output: OutputFormat, *, title: str) -> None:
+    """Encaminha os dados para o renderizador JSON ou de tabela."""
+
     if is_json_output(output):
         render_json(data)
     else:

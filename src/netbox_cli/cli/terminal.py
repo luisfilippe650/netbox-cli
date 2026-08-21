@@ -86,8 +86,7 @@ def _header(
             "[bold cyan]NetBox CLI[/bold cyan]\n"
             f"{identity}\n"
             f"[dim]/api/authentication-check/ • {connection}[/dim]\n"
-            f"[dim]{escape(settings.url)} • timeout {settings.timeout}s[/dim]\n"
-            f"[dim]{escape(str(store.path))}[/dim]",
+            f"[dim]{escape(settings.url)} • timeout {settings.timeout}s[/dim]",
             border_style="cyan",
         )
     )

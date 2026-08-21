@@ -11,6 +11,8 @@ from netbox_cli.presentation.output import console, is_json_output, render_json
 
 
 def render_rack(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe a elevação de um rack com os equipamentos em cada unidade."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -57,6 +59,8 @@ def render_rack(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def render_availability(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe as posições capazes de acomodar um dispositivo no rack."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -78,6 +82,8 @@ def render_availability(data: dict[str, Any], output: DetailOutputFormat) -> Non
 
 
 def render_capacity(data: dict[str, Any], output: DetailOutputFormat) -> None:
+    """Exibe o resumo de capacidade e ocupação de um rack."""
+
     if is_json_output(output):
         render_json(data)
         return
@@ -103,6 +109,8 @@ def render_capacity(data: dict[str, Any], output: DetailOutputFormat) -> None:
 
 
 def _is_number(value: object) -> bool:
+    """Indica se um valor pode ser interpretado como número."""
+
     try:
         float(str(value))
     except (TypeError, ValueError):
@@ -111,11 +119,15 @@ def _is_number(value: object) -> bool:
 
 
 def _number(value: object) -> str:
+    """Formata uma unidade de rack sem casas decimais desnecessárias."""
+
     number = float(str(value))
     return str(int(number)) if number.is_integer() else str(number)
 
 
 def _unit_occupant(unit: Any) -> str:
+    """Obtém o nome do dispositivo ou da reserva que ocupa uma unidade."""
+
     if not isinstance(unit, dict) or not unit.get("occupied"):
         return ""
     device = unit.get("device")

@@ -11,6 +11,7 @@ from netbox_cli.app import app
 from netbox_cli.client import NetBoxClientError
 from netbox_cli.config import ConfigStore, Settings
 from netbox_cli.runtime import RuntimeOptions, configure
+from netbox_cli.schemas.devices import AddDevice
 from netbox_cli.schemas.organization import AddRegion
 from netbox_cli.service.devices import DevicesService
 from netbox_cli.service.organization import RegionsService
@@ -171,6 +172,36 @@ def test_ensure_dry_run_reports_change_without_mutating() -> None:
 
     assert result["action"] == "would_update"
     assert result["changes"] == {"description": "Nova"}
+    assert [call[0] for call in client.calls] == ["GET"]
+
+
+@pytest.mark.parametrize("position", [1.0, 1.5])
+def test_device_ensure_treats_numeric_position_as_unchanged(position: float) -> None:
+    current = {
+        "id": 9,
+        "name": "server-01",
+        "role": {"id": 4},
+        "device_type": {"id": 4},
+        "site": {"id": 1},
+        "rack": {"id": 14},
+        "position": position,
+        "face": {"value": "front"},
+    }
+    client = FakeClient([{"count": 1, "results": [current]}])
+
+    result = DevicesService(client).ensure(  # type: ignore[arg-type]
+        AddDevice(
+            name="server-01",
+            role=4,
+            device_type=4,
+            site=1,
+            rack=14,
+            position=position,
+        )
+    )
+
+    assert result["action"] == "unchanged"
+    assert result["changed"] is False
     assert [call[0] for call in client.calls] == ["GET"]
 
 
