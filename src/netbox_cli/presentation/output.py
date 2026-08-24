@@ -51,7 +51,13 @@ def _display_value(value: Any) -> str:
         return ""
 
     if isinstance(value, dict):
-        return str(value.get("display") or value.get("name") or value.get("id") or "")
+        for field in ("display", "name", "label", "value", "id"):
+            nested = value.get(field)
+
+            if nested is not None and nested != "":
+                return str(nested)
+
+        return ""
 
     if isinstance(value, list):
         return ", ".join(_display_value(item) for item in value)
@@ -91,14 +97,40 @@ def resource_id(data: Any) -> int | str | None:
 
 
 def render_id(data: Any) -> None:
-    """Escreve somente o ID, facilitando substituição de comando em scripts."""
+    """Escreve um ID por linha para respostas únicas ou listagens."""
+    rows: list[Any] | None = None
+
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        rows = data["results"]
+    elif isinstance(data, list):
+        rows = data
+
+    if rows is not None:
+        identifiers = [resource_id(row) for row in rows]
+
+        if any(identifier is None for identifier in identifiers):
+            error_console.print(
+                "[red]Um ou mais itens da listagem não possuem ID.[/red]"
+            )
+            raise typer.Exit(code=1)
+
+        for identifier in identifiers:
+            typer.echo(identifier)
+
+        return
+
     identifier = resource_id(data)
 
     if identifier is None:
-        error_console.print(
-            "[red]A operação não retornou um ID. "
-            "Em um dry-run de criação, o recurso ainda não existe.[/red]"
-        )
+        if isinstance(data, dict) and data.get("action") == "would_create":
+            message = (
+                "A operação não retornou um ID porque o dry-run indica uma criação; "
+                "o recurso ainda não existe."
+            )
+        else:
+            message = "A operação não retornou um ID."
+
+        error_console.print(f"[red]{message}[/red]")
 
         raise typer.Exit(code=1)
 

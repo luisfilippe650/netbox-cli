@@ -27,6 +27,7 @@ capacidade, elevação de racks, rastreamento físico e árvores de infraestrutu
 - [Fabricantes](#fabricantes)
 - [Tipos de dispositivos](#tipos-de-dispositivos)
 - [Dispositivos](#dispositivos)
+- [Importação declarativa](#importação-declarativa)
 - [Idempotência e dry-run](#idempotência-e-dry-run)
 - [Receitas de automação](#receitas-de-automação)
 - [Uso com agentes de IA](#uso-com-agentes-de-ia)
@@ -341,6 +342,7 @@ pipe para `jq`.
 | `netbox inventory` | Exportação de inventário |
 | `netbox trace DEVICE INTERFACE` | Rastreamento físico |
 | `netbox tree` | Hierarquia completa |
+| `netbox import FILE` | Importação declarativa YAML/JSON |
 | `netbox regions ...` | Regiões |
 | `netbox sites ...` | Sites |
 | `netbox locations ...` | Locais |
@@ -1104,9 +1106,59 @@ netbox devices delete 30 --ignore-not-found
 netbox devices delete 30 --dry-run --ignore-not-found
 ```
 
+## Importação declarativa
+
+`import` converge vários recursos com o mesmo comportamento idempotente de
+`create --ensure`. O arquivo pode ser YAML ou JSON e as dependências são
+processadas em ordem segura, independentemente da ordem das chaves.
+
+```yaml
+version: 1
+resources:
+  regions:
+    - name: Sudeste
+      description: Região Sudeste
+  sites:
+    - name: CPTEC
+      region: Sudeste
+  locations:
+    - name: Datacenter
+      site: CPTEC
+  manufacturers:
+    - name: Dell
+  device-roles:
+    - name: Servidor
+      color: 2196f3
+  device-types:
+    - manufacturer: Dell
+      model: PowerEdge R650
+      u_height: 1
+```
+
+Planeje e aplique o documento:
+
+```bash
+netbox import infraestrutura.yaml --dry-run
+netbox import infraestrutura.yaml
+```
+
+São aceitos `regions`, `sites`, `locations`, `rack-groups`, `racks`,
+`manufacturers`, `device-roles`, `device-types` e `devices`. Nomes singulares e
+nomes com `_`, como `device_type`, também são reconhecidos.
+
+O modo atômico é habilitado por padrão. Se um item falhar, criações anteriores
+são excluídas e atualizações anteriores recebem novamente os valores originais,
+sempre em ordem inversa. Como o NetBox não oferece uma transação única para
+vários endpoints REST, essa atomicidade é implementada por compensação; qualquer
+falha no próprio rollback é informada explicitamente. Use `--no-atomic` somente
+quando quiser preservar as alterações aplicadas antes de uma falha.
+
+O `--dry-run` não envia `POST`, `PATCH` ou `DELETE`. Recursos criados no próprio
+plano podem ser referenciados por nome nos itens seguintes.
+
 ## Idempotência e dry-run
 
-### `post --ensure`
+### `create --ensure`
 
 O fluxo de convergência é:
 
@@ -1186,9 +1238,11 @@ DEVICE_ID=$(netbox devices create \
   --output id)
 ```
 
-O comando imprime somente o valor, como `30`. Também é possível usar a opção
-global: `netbox --output id devices create ...`. Se a operação não possuir ID,
-como uma criação com `--dry-run`, a CLI encerra com código 1 e explica o motivo.
+O comando imprime somente o valor, como `30`. Em listagens, imprime um ID por
+linha; uma listagem vazia produz saída vazia com sucesso. Também é possível usar
+a opção global: `netbox --output id devices create ...`. Se uma operação única
+não possuir ID, como uma criação com `--dry-run`, a CLI encerra com código 1 e
+explica o motivo.
 
 ### `--dry-run`
 

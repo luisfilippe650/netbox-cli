@@ -24,6 +24,7 @@ from netbox_cli.cli.devices.connectivity_cli import (
 from netbox_cli.cli.devices.device_types_cli import app as device_types_app
 from netbox_cli.cli.devices.devices_cli import app as devices_app
 from netbox_cli.cli.devices.manufacturers_cli import app as manufacturers_app
+from netbox_cli.cli.import_cli import import_resources
 from netbox_cli.cli.login import login
 from netbox_cli.cli.organization.locations_cli import app as locations_app
 from netbox_cli.cli.organization.regions_cli import app as regions_app
@@ -62,6 +63,7 @@ app.command("trace")(trace)
 app.command("status")(status)
 app.command("tree")(tree)
 app.command("login")(login)
+app.command("import")(import_resources)
 
 
 def version_callback(show_version: bool) -> None:
