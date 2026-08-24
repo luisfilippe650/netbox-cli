@@ -34,6 +34,7 @@ class AuthService:
 
     def login(self, username: str, password: str) -> str:
         """Mantém a API anterior; novos fluxos devem usar provision()."""
+
         return self.provision(username, password).value
 
     def provision(self, username: str, password: str) -> ProvisionedToken:
@@ -47,31 +48,41 @@ class AuthService:
                 "version": 2,
             },
         )
+
         if (
             not isinstance(result, dict)
             or not result.get("token")
             or not result.get("id")
         ):
             raise AuthenticationError("O NetBox não retornou o token de acesso")
+
         version = result.get("version")
+
         if version != 2:
             raise AuthenticationError(
                 "O NetBox não provisionou um token v2 compatível com esta CLI"
             )
+
         token = str(result["token"])
+
         if token.startswith("nbt_"):
             value = token
         else:
             key = result.get("key")
+
             if not key:
                 raise AuthenticationError("O NetBox não retornou a chave do token v2")
+
             value = f"nbt_{key}.{token}"
+
         return ProvisionedToken(id=int(result["id"]), value=value, version=2)
 
     def validate(self) -> dict:
         result = self.client.get(self.AUTHENTICATION_ENDPOINT)
+
         if not isinstance(result, dict):
             raise AuthenticationError("Resposta de autenticação inválida")
+
         return result
 
     def require_superuser(self) -> None:
@@ -83,6 +94,7 @@ class AuthService:
                     "A NetBox CLI é exclusiva para superusuários. "
                     "Este usuário não possui acesso de superusuário."
                 ) from error
+
             raise
 
     def revoke(self, token_id: int) -> None:
@@ -91,15 +103,21 @@ class AuthService:
     def find_token_id(self, token: str) -> int | None:
         if not token.startswith("nbt_") or "." not in token:
             return None
+
         key = token.removeprefix("nbt_").split(".", 1)[0]
         result = self.client.get(
             self.TOKENS_ENDPOINT,
             params={"key": key, "limit": 2},
         )
+
         if not isinstance(result, dict) or not isinstance(result.get("results"), list):
             raise AuthenticationError("Resposta inválida ao localizar o token atual")
+
         matches = result["results"]
+
         if len(matches) != 1 or not isinstance(matches[0], dict):
             return None
+
         token_id = matches[0].get("id")
+
         return token_id if isinstance(token_id, int) else None

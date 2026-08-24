@@ -10,6 +10,7 @@ from netbox_cli.cli.common import (
     explicit_update_fields,
     make_service,
     parse_json_object,
+    update_resource,
 )
 from netbox_cli.presentation.details import (
     DetailOutputFormat,
@@ -18,23 +19,32 @@ from netbox_cli.presentation.details import (
 )
 from netbox_cli.presentation.output import is_json_output, render_json
 from netbox_cli.presentation.output import OutputFormat
-from netbox_cli.schemas.devices import AddDevice
+from netbox_cli.presentation.table_options import TableOptions, parse_columns
+from netbox_cli.schemas.devices import AddDevice, UpdateDevice
 from netbox_cli.service.devices import DevicesService
 from netbox_cli.service.infrastructure_service import InfrastructureService
 
 app = typer.Typer(help="Gerencia dispositivos.", no_args_is_help=True)
 
 
-@app.command("post")
+@app.command("create")
 def post_device(
     ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n")],
-    role: Annotated[int, typer.Option("--role", help="ID da função.", min=1)],
-    device_type: Annotated[int, typer.Option("--device-type", help="ID do tipo.", min=1)],
-    site: Annotated[int, typer.Option("--site", help="ID do site.", min=1)],
+    role: Annotated[
+        str, typer.Option("--role", help="ID, nome ou slug da função.")
+    ],
+    device_type: Annotated[
+        str, typer.Option("--device-type", help="ID, modelo ou slug do tipo.")
+    ],
+    site: Annotated[str, typer.Option("--site", help="ID, nome ou slug do site.")],
     serial: Annotated[str | None, typer.Option("--serial")] = None,
-    location: Annotated[int | None, typer.Option("--location", min=1)] = None,
-    rack: Annotated[int | None, typer.Option("--rack", min=1)] = None,
+    location: Annotated[
+        str | None, typer.Option("--location", help="ID, nome ou slug da localização.")
+    ] = None,
+    rack: Annotated[
+        str | None, typer.Option("--rack", help="ID, nome ou slug do rack.")
+    ] = None,
     position: Annotated[float | None, typer.Option("--position", min=1)] = None,
     custom_fields: Annotated[
         str,
@@ -100,21 +110,91 @@ def get_device(
     )
 
 
-@app.command("all")
+@app.command("list")
 def all_devices(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
     limit: Annotated[int | None, typer.Option(min=0)] = 0,
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+    wide: Annotated[
+        bool, typer.Option("--wide", help="Exibe todas as colunas disponíveis.")
+    ] = False,
+    no_truncate: Annotated[
+        bool,
+        typer.Option(
+            "--no-truncate",
+            help="Preserva valores completos com quebra de linha.",
+        ),
+    ] = False,
+    columns: Annotated[
+        str | None,
+        typer.Option(
+            "--columns",
+            help="Colunas separadas por vírgula, na ordem desejada.",
+        ),
+    ] = None,
 ) -> None:
     """Lista dispositivos."""
     execute(
         lambda: make_service(DevicesService).list(search=search, limit=limit),
         output=output,
         title="Dispositivos",
+        table_options=TableOptions(
+            wide=wide,
+            no_truncate=no_truncate,
+            columns=parse_columns(columns),
+        ),
     )
 
 
-app.command("list", hidden=True)(all_devices)
+app.command("post", hidden=True)(post_device)
+app.command("all", hidden=True)(all_devices)
+
+
+@app.command("update")
+def update_device(
+    device_id: Annotated[int, typer.Argument(min=1)],
+    name: Annotated[str | None, typer.Option("--name", "-n")] = None,
+    role: Annotated[
+        str | None, typer.Option("--role", help="ID, nome ou slug da função.")
+    ] = None,
+    device_type: Annotated[
+        str | None, typer.Option("--device-type", help="ID, modelo ou slug do tipo.")
+    ] = None,
+    site: Annotated[
+        str | None, typer.Option("--site", help="ID, nome ou slug do site.")
+    ] = None,
+    serial: Annotated[str | None, typer.Option("--serial")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    custom_fields: Annotated[
+        str | None,
+        typer.Option("--custom-fields", help="Objeto JSON com os campos personalizados."),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+) -> None:
+    """Atualiza somente os campos informados de um dispositivo."""
+    execute(
+        lambda: update_resource(
+            DevicesService,
+            device_id,
+            UpdateDevice(
+                name=name,
+                role=role,
+                device_type=device_type,
+                site=site,
+                serial=serial,
+                status=status,
+                custom_fields=(
+                    parse_json_object(custom_fields, option_name="--custom-fields")
+                    if custom_fields is not None
+                    else None
+                ),
+            ),
+            dry_run=dry_run,
+        ),
+        output=output,
+        title="Dispositivo atualizado",
+    )
 
 
 @app.command("delete")
@@ -164,6 +244,7 @@ def move_device(
             dry_run=dry_run,
         )
     )
+
     if is_json_output(output):
         render_json(result)
     else:
@@ -232,6 +313,7 @@ def allocate_device(
             dry_run=dry_run,
         )
     )
+
     if is_json_output(output):
         render_json(result)
     else:
@@ -257,6 +339,7 @@ def deallocate_device(
             name, site_name=site, dry_run=dry_run
         )
     )
+
     if is_json_output(output):
         render_json(result)
     else:

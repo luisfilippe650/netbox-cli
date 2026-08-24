@@ -132,6 +132,7 @@ netbox login
 Depois do login, valide a conexão:
 
 ```bash
+netbox --version
 netbox status
 netbox --output json status
 ```
@@ -207,11 +208,16 @@ netbox [OPÇÕES GLOBAIS] COMANDO [OPÇÕES DO COMANDO]
 
 | Opção | Finalidade |
 |---|---|
+| `--version` | Exibe a versão instalada da CLI e encerra |
 | `--url URL` | Sobrescreve a URL |
 | `--token TOKEN` | Sobrescreve o token |
 | `--timeout SEGUNDOS` | Sobrescreve o timeout |
 | `--config CAMINHO` | Seleciona outro YAML |
-| `--output json\|human` | Força o formato global |
+| `--output json\|human\|id` | Força o formato global |
+| `--retries N` | Repete leituras após falhas transitórias; padrão 2 |
+| `--backoff SEGUNDOS` | Espera inicial exponencial; padrão 0,5 s |
+| `--verbose`, `-v` | Mostra endpoint, tentativa, timeout e resposta |
+| `--debug` | Ativa verbose e inclui tipo da exceção e traceback |
 
 Exemplo:
 
@@ -221,11 +227,37 @@ netbox \
   --token "$NETBOX_TOKEN" \
   --timeout 20 \
   --output json \
-  devices all
+  devices list
 ```
 
 Prefira `NETBOX_TOKEN` a `--token`, pois argumentos podem aparecer no histórico
 do shell e na listagem de processos.
+
+### Diagnóstico e novas tentativas
+
+Erros de comunicação exibem sempre método, endpoint, timeout por tentativa,
+quantidade de tentativas realizadas e causa resumida. Para acompanhar cada
+requisição:
+
+```bash
+netbox \
+  --timeout 5 \
+  --retries 3 \
+  --backoff 0.5 \
+  --verbose \
+  devices list
+```
+
+O backoff é exponencial: com `--backoff 0.5`, as esperas são 0,5 s, 1 s e 2 s.
+O cabeçalho HTTP `Retry-After`, quando numérico, tem precedência.
+
+São repetidas somente leituras `GET`, `HEAD` e `OPTIONS` após timeout, falha de
+conexão, HTTP 429, 500, 502, 503 ou 504. Mutações `POST` e `PATCH` não são
+repetidas automaticamente, evitando duplicação caso o servidor tenha processado
+a operação antes da conexão cair.
+
+Use `--debug` quando o resumo não for suficiente. O traceback é enviado para
+stderr e nunca inclui o token ou o corpo enviado pela requisição.
 
 ### Precedência
 
@@ -315,22 +347,36 @@ pipe para `jq`.
 | `netbox rack-groups ...` | Grupos de racks |
 | `netbox racks ...` | Racks |
 | `netbox manufacturers ...` | Fabricantes |
+| `netbox device-roles ...` | Funções de dispositivos |
 | `netbox device-types ...` | Tipos de dispositivos |
 | `netbox devices ...` | Dispositivos |
+| `netbox interfaces ...` | Interfaces |
+| `netbox front-ports ...` | Portas frontais |
+| `netbox rear-ports ...` | Portas traseiras |
+| `netbox console-ports ...` | Portas de console |
+| `netbox power-ports ...` | Portas de energia |
+| `netbox cables ...` | Cabos e conexões |
 
 `site`, `rack` e `device` são aliases singulares de `sites`, `racks` e `devices`.
 
 Aliases ocultos mantidos por compatibilidade:
 
-- `regions create`, `sites create` e `locations create` equivalem a `post`;
-- `manufacturers list`, `device-types list` e `devices list` equivalem a `all`.
+- `post` continua equivalente a `create`;
+- `all` continua equivalente a `list`;
+- `view`, usado anteriormente por regiões, sites e locais, continua equivalente
+  a `get`.
+
+Os recursos CRUD usam o mesmo contrato: `list`, `get`, `create`, `update` e
+`delete`. Comandos operacionais como `status`, `tree`, `move` e `capacity`
+continuam disponíveis ao lado desse conjunto.
 
 ## Consultas operacionais
 
 ### `status`
 
-Verifica URL, conectividade, existência e versão do token, autenticação e acesso
-de superusuário.
+Exibe a versão da CLI e verifica URL, conectividade, existência e versão do
+token, autenticação e acesso de superusuário. No JSON, a versão está disponível
+em `cli_version`.
 
 ```bash
 netbox status
@@ -385,7 +431,15 @@ netbox inventory --rack RACK-04 --site CPTEC
 netbox inventory --rack RACK-04 --site CPTEC --location Datacenter
 netbox inventory --rack RACK-04 --output json
 netbox inventory --rack RACK-04 --output csv > rack-04.csv
+netbox inventory --rack RACK-04 --wide
+netbox inventory --rack RACK-04 --no-truncate
+netbox inventory --rack RACK-04 --columns id,name,role,rack,status
 ```
+
+Na saída humana, as colunas são escolhidas conforme a largura atual do terminal.
+`--wide` mostra o conjunto completo, `--no-truncate` preserva os valores inteiros
+usando quebras de linha e `--columns` seleciona e ordena campos específicos. A
+seleção de colunas também pode ser usada com CSV; JSON não é modificado.
 
 O CSV possui colunas estáveis para ID, nome, função, tipo, site, local, rack,
 posição, status, IP primário e serial.
@@ -429,6 +483,82 @@ netbox device tree server-01 --site CPTEC
 netbox --output json device tree server-01 --site CPTEC
 ```
 
+## Componentes e conexões
+
+Todos os comandos de componentes possuem `create`, `list`, `update` e `delete`.
+O dispositivo pode ser informado por ID ou nome exato. Os valores de `--type`
+usam os identificadores aceitos pelo NetBox.
+
+### Interfaces
+
+```bash
+netbox interfaces create \
+  --device switch-01 \
+  --name Gi0/1 \
+  --type 1000base-t
+netbox interfaces list --device switch-01
+netbox interfaces update 10 --description "Uplink principal"
+netbox interfaces delete 10 --dry-run
+```
+
+### Patch panels
+
+Crie primeiro a porta traseira e depois associe a porta frontal pelo ID ou nome:
+
+```bash
+netbox rear-ports create \
+  --device patch-panel-01 \
+  --name Rear-01 \
+  --type 8p8c
+
+netbox front-ports create \
+  --device patch-panel-01 \
+  --name Front-01 \
+  --type 8p8c \
+  --rear-port Rear-01 \
+  --rear-port-position 1
+```
+
+### Console e energia
+
+```bash
+netbox console-ports create \
+  --device servidor-01 \
+  --name Console \
+  --type rj-45 \
+  --speed 9600
+
+netbox power-ports create \
+  --device servidor-01 \
+  --name PSU-1 \
+  --type iec-60320-c14 \
+  --maximum-draw 500
+```
+
+### Cabos
+
+As terminações aceitas são `interface`, `front-port`, `rear-port`,
+`console-port` e `power-port`:
+
+```bash
+netbox cables create \
+  --a-type interface \
+  --a-device switch-01 \
+  --a-name Gi0/1 \
+  --b-type front-port \
+  --b-device patch-panel-01 \
+  --b-name Front-01 \
+  --type cat6 \
+  --label CAB-001
+
+netbox cables list
+netbox cables update 20 --status planned
+netbox cables delete 20 --dry-run
+```
+
+Use `--dry-run` nas criações e atualizações para conferir os IDs resolvidos e o
+payload sem alterar o NetBox. Exclusões também aceitam `--ignore-not-found`.
+
 A árvore do dispositivo inclui caminho de localização, interfaces, IPs,
 equipamentos conectados e conexões dos demais componentes físicos.
 
@@ -437,13 +567,13 @@ equipamentos conectados e conexões dos demais componentes físicos.
 ### Criar ou convergir
 
 ```bash
-netbox regions post --name Sudeste
-netbox regions post \
+netbox regions create --name Sudeste
+netbox regions create \
   --name Sudeste \
   --slug sudeste \
   --description "Região Sudeste" \
   --ensure
-netbox regions post --name Sudeste --ensure --dry-run
+netbox regions create --name Sudeste --ensure --dry-run
 ```
 
 Opções: `--name`, `--slug`, `--description`, `--ensure`, `--dry-run` e
@@ -455,7 +585,7 @@ explicitamente informadas participam do PATCH.
 ### Consultar e listar
 
 ```bash
-netbox regions view 1
+netbox regions get 1
 netbox regions list
 netbox regions list --search sudeste
 netbox regions list --limit 0
@@ -464,9 +594,10 @@ netbox regions list --output table
 
 `--limit 0` percorre todas as páginas.
 
-### Excluir
+### Atualizar e excluir
 
 ```bash
+netbox regions update 1 --name "Sudeste Brasil"
 netbox regions delete 1
 netbox regions delete 1 --dry-run
 netbox regions delete 1 --ignore-not-found
@@ -477,24 +608,24 @@ netbox regions delete 1 --ignore-not-found
 ### Criar ou convergir
 
 ```bash
-netbox sites post --name CPTEC
-netbox sites post \
+netbox sites create --name CPTEC
+netbox sites create \
   --name CPTEC \
   --slug cptec \
   --status active \
-  --region 1 \
+  --region sudeste \
   --description "Site principal" \
   --ensure
-netbox sites post --name CPTEC --region 1 --ensure --dry-run
+netbox sites create --name CPTEC --region Sudeste --ensure --dry-run
 ```
 
-Opções: `--name`, `--slug`, `--status`, `--region ID`, `--description`,
+Opções: `--name`, `--slug`, `--status`, `--region ID|NOME|SLUG`, `--description`,
 `--ensure`, `--dry-run` e `--output json|table`.
 
 ### Consultar e listar
 
 ```bash
-netbox sites view 1
+netbox sites get 1
 netbox sites list
 netbox sites list --search cptec
 netbox sites list --limit 0
@@ -511,9 +642,10 @@ netbox --output json site status CPTEC
 O resumo agrega racks, dispositivos, capacidade total, unidades ocupadas/livres,
 percentual de ocupação e distribuição por fabricante.
 
-### Excluir
+### Atualizar e excluir
 
 ```bash
+netbox sites update 1 --status active --region Sudeste
 netbox sites delete 1
 netbox sites delete 1 --dry-run
 netbox sites delete 1 --ignore-not-found
@@ -526,30 +658,32 @@ Locations pertencem a um site e podem ter um local pai.
 ### Criar ou convergir
 
 ```bash
-netbox locations post --name Datacenter --site 1
-netbox locations post \
+netbox locations create --name Datacenter --site CPTEC
+netbox locations create \
   --name Datacenter \
-  --site 1 \
+  --site CPTEC \
   --slug datacenter \
   --status active \
   --parent 2 \
   --description "Sala principal" \
   --ensure
-netbox locations post --name Datacenter --site 1 --ensure --dry-run
+netbox locations create --name Datacenter --site cptec --ensure --dry-run
 ```
 
-Opções: `--name`, `--site ID`, `--slug`, `--status`, `--parent ID`,
+Opções: `--name`, `--site ID|NOME|SLUG`, `--slug`, `--status`,
+`--parent ID|NOME|SLUG`,
 `--description`, `--ensure`, `--dry-run` e `--output json|table`.
 
 O `--ensure` identifica o local pela combinação nome e site.
 
-### Consultar, listar e excluir
+### Consultar, listar, atualizar e excluir
 
 ```bash
-netbox locations view 1
+netbox locations get 1
 netbox locations list
 netbox locations list --search data
 netbox locations list --limit 0
+netbox locations update 1 --description "Sala principal"
 netbox locations delete 1 --dry-run
 netbox locations delete 1 --ignore-not-found
 ```
@@ -559,9 +693,9 @@ netbox locations delete 1 --ignore-not-found
 ### Criar ou convergir
 
 ```bash
-netbox rack-groups post --name "Corredor A"
-netbox rack-groups post --name "Corredor A" --ensure
-netbox rack-groups post --name "Corredor A" --ensure --dry-run
+netbox rack-groups create --name "Corredor A"
+netbox rack-groups create --name "Corredor A" --ensure
+netbox rack-groups create --name "Corredor A" --ensure --dry-run
 ```
 
 O slug é gerado automaticamente pelo nome.
@@ -570,13 +704,13 @@ O slug é gerado automaticamente pelo nome.
 
 ```bash
 netbox rack-groups get 1
-netbox rack-groups all
-netbox rack-groups all --search corredor
-netbox rack-groups all --limit 20
-netbox rack-groups all --output table
+netbox rack-groups list
+netbox rack-groups list --search corredor
+netbox rack-groups list --limit 20
+netbox rack-groups list --output table
 ```
 
-Sem `--limit`, `all` percorre todas as páginas. `--limit 0` também representa
+Sem `--limit`, `list` percorre todas as páginas. `--limit 0` também representa
 todos os resultados.
 
 ### Atualizar
@@ -602,8 +736,8 @@ netbox rack-groups delete 1 --ignore-not-found
 ### Criar ou convergir
 
 ```bash
-netbox racks post \
-  --site 1 \
+netbox racks create \
+  --site "Site Teste" \
   --name RACK-04 \
   --width 19 \
   --starting-unit 1 \
@@ -613,13 +747,13 @@ netbox racks post \
 Com vínculos opcionais:
 
 ```bash
-netbox racks post \
-  --site 1 \
+netbox racks create \
+  --site site-teste \
   --name RACK-04 \
   --width 19 \
   --starting-unit 1 \
   --u-height 42 \
-  --location 3 \
+  --location "Sala Teste" \
   --group 2 \
   --role 3 \
   --type 4 \
@@ -629,8 +763,8 @@ netbox racks post \
 Simulação idempotente:
 
 ```bash
-netbox --output json racks post \
-  --site 1 \
+netbox --output json racks create \
+  --site "Site Teste" \
   --name RACK-04 \
   --width 19 \
   --starting-unit 1 \
@@ -641,7 +775,8 @@ netbox --output json racks post \
 
 Campos obrigatórios: `--site`, `--name`, `--width`, `--starting-unit` e
 `--u-height`. Larguras aceitas: `10`, `19`, `21` e `23`. O status inicial é
-`active`. Location, grupo, função e tipo são IDs opcionais.
+`active`. Site e localização aceitam ID, nome exato ou slug. A localização é
+resolvida dentro do site. Grupo, função e tipo são IDs opcionais.
 
 O `--ensure` identifica o rack por nome e site. Defaults de criação, como status,
 não sobrescrevem um rack existente quando não foram informados.
@@ -650,10 +785,10 @@ não sobrescrevem um rack existente quando não foram informados.
 
 ```bash
 netbox racks get 4
-netbox racks all
-netbox racks all --search RACK-04
-netbox racks all --limit 25
-netbox racks all --output table
+netbox racks list
+netbox racks list --search RACK-04
+netbox racks list --limit 25
+netbox racks list --output table
 ```
 
 ### Atualizar
@@ -661,6 +796,7 @@ netbox racks all --output table
 ```bash
 netbox racks update 4 --name RACK-04A
 netbox racks update 4 --location 3
+netbox racks update 4 --location "Sala Teste"
 netbox racks update 4 --u-height 48 --role 3
 netbox racks update 4 --u-height 48 --dry-run
 ```
@@ -675,11 +811,16 @@ apenas as diferenças reais.
 ### Elevação
 
 ```bash
+netbox rack show 4
 netbox rack show RACK-04
 netbox rack show RACK-04 --face rear
 netbox rack show RACK-04 --site CPTEC --location Datacenter
 netbox --output json rack show RACK-04
 ```
+
+O primeiro argumento aceita o ID numérico ou o nome exato do rack. O mesmo
+contrato é usado por `rack tree`, `rack available` e `rack capacity`.
+Quando informados, `--site` e `--location` também restringem buscas por ID.
 
 `--face` aceita `front` ou `rear`.
 
@@ -727,56 +868,74 @@ netbox racks delete 4 --ignore-not-found
 ### Criar ou convergir
 
 ```bash
-netbox manufacturers post --name Dell
-netbox manufacturers post \
+netbox manufacturers create --name Dell
+netbox manufacturers create \
   --name Dell \
   --comments "Fornecedor principal" \
   --ensure
-netbox manufacturers post --name Dell --ensure --dry-run
+netbox manufacturers create --name Dell --ensure --dry-run
 ```
 
 O nome identifica o fabricante. `--comments|--comment` é opcional.
 
-### Consultar, listar e excluir
+### Consultar, listar, atualizar e excluir
 
 ```bash
 netbox manufacturers get 10
-netbox manufacturers all
-netbox manufacturers all --search dell
-netbox manufacturers all --limit 20
-netbox manufacturers all --output table
+netbox manufacturers list
+netbox manufacturers list --search dell
+netbox manufacturers list --limit 20
+netbox manufacturers list --output table
+netbox manufacturers update 10 --comments "Fornecedor homologado"
 netbox manufacturers delete 10 --dry-run
 netbox manufacturers delete 10 --ignore-not-found
 ```
+
+## Funções de dispositivos
+
+```bash
+netbox device-roles create --name Servidor
+netbox device-roles create --name Servidor --color 2196f3 --no-vm-role
+netbox device-roles get 2
+netbox device-roles list
+netbox device-roles list --search servidor --output table
+netbox device-roles update 2 --name "Servidor físico" --color 3f51b5
+netbox device-roles delete 2 --dry-run
+netbox device-roles delete 2 --ignore-not-found
+```
+
+O slug é gerado automaticamente a partir do nome. `create` também aceita
+`--ensure` para criar ou convergir uma função existente.
 
 ## Tipos de dispositivos
 
 ### Criar ou convergir
 
 ```bash
-netbox device-types post \
-  --manufacturer 10 \
+netbox device-types create \
+  --manufacturer Dell \
   --model "PowerEdge R650" \
   --u-height 1
 
-netbox device-types post \
-  --manufacturer 10 \
+netbox device-types create \
+  --manufacturer dell \
   --model "PowerEdge R650" \
   --u-height 1 \
   --ensure
 ```
 
-Campos obrigatórios: fabricante por ID, modelo e altura. O `--ensure` identifica
-o tipo pela combinação fabricante e modelo.
+Campos obrigatórios: fabricante, modelo e altura. O fabricante aceita ID, nome
+exato ou slug. O `--ensure` identifica o tipo pela combinação fabricante e modelo.
 
-### Consultar, listar e excluir
+### Consultar, listar, atualizar e excluir
 
 ```bash
 netbox device-types get 15
-netbox device-types all
-netbox device-types all --search PowerEdge
-netbox device-types all --limit 20
-netbox device-types all --output table
+netbox device-types list
+netbox device-types list --search PowerEdge
+netbox device-types list --limit 20
+netbox device-types list --output table
+netbox device-types update 15 --u-height 2
 netbox device-types delete 15 --dry-run
 netbox device-types delete 15 --ignore-not-found
 ```
@@ -788,38 +947,40 @@ netbox device-types delete 15 --ignore-not-found
 Cadastro mínimo:
 
 ```bash
-netbox devices post \
+netbox devices create \
   --name server-01 \
-  --role 2 \
-  --device-type 15 \
-  --site 1
+  --role Servidor \
+  --device-type "PowerEdge R650" \
+  --site "Site Teste"
 ```
 
 Cadastro montado em rack:
 
 ```bash
-netbox devices post \
+netbox devices create \
   --name server-01 \
-  --role 2 \
-  --device-type 15 \
-  --site 1 \
+  --role servidor \
+  --device-type poweredge-r650 \
+  --site site-teste \
   --serial ABC123 \
-  --location 3 \
-  --rack 4 \
+  --location "Sala Teste" \
+  --rack Rack-01 \
   --position 10
 ```
 
-Quando `--position` é informado, `--rack` é obrigatório e a face é `front`.
+Função, tipo, site, localização e rack aceitam ID, nome/modelo exato ou slug.
+Localização e rack são resolvidos dentro do site. Quando `--position` é
+informado, `--rack` é obrigatório e a face é `front`.
 Posições aceitam incrementos de meia unidade.
 
 Campos personalizados usam um objeto JSON:
 
 ```bash
-netbox devices post \
+netbox devices create \
   --name server-01 \
-  --role 2 \
-  --device-type 15 \
-  --site 1 \
+  --role Servidor \
+  --device-type "PowerEdge R650" \
+  --site "Site Teste" \
   --custom-fields '{"patrimonio":"PAT-001","monitorado":true}'
 ```
 
@@ -829,11 +990,11 @@ criação quando um campo obrigatório não foi fornecido.
 Modo idempotente:
 
 ```bash
-netbox --output json devices post \
+netbox --output json devices create \
   --name server-01 \
-  --role 2 \
-  --device-type 15 \
-  --site 1 \
+  --role Servidor \
+  --device-type "PowerEdge R650" \
+  --site "Site Teste" \
   --serial ABC123 \
   --ensure
 ```
@@ -846,10 +1007,25 @@ existentes, somente opções explicitamente informadas são atualizadas;
 
 ```bash
 netbox devices get 30
-netbox devices all
-netbox devices all --search server
-netbox devices all --limit 50
-netbox devices all --output table
+netbox devices list
+netbox devices list --search server
+netbox devices list --limit 50
+netbox devices list --output table
+netbox devices list --output table --wide
+netbox devices list --output table --no-truncate
+netbox devices list --output table --columns id,name,role,site,rack,status
+```
+
+As tabelas se ajustam à largura do terminal. Use `--wide` para incluir todas as
+colunas, `--no-truncate` para quebrar valores longos sem reticências ou
+`--columns` para escolher e ordenar os campos exibidos.
+
+### Atualizar
+
+```bash
+netbox devices update 30 --name server-02 --status offline
+netbox devices update 30 --role Servidor --device-type "PowerEdge R650"
+netbox devices update 30 --custom-fields '{"patrimonio":"PAT-002"}' --dry-run
 ```
 
 ### Inspecionar
@@ -985,6 +1161,35 @@ Respostas típicas:
 }
 ```
 
+### Contrato JSON e `--output id`
+
+Uma criação sem `--ensure` retorna diretamente o objeto da API, portanto o ID
+fica em `.id`. Com `--ensure`, a resposta inclui metadados de convergência e o
+objeto fica em `.resource`, portanto o ID fica em `.resource.id`:
+
+| Operação | Caminho JSON do ID |
+|---|---|
+| Criação normal | `.id` |
+| `--ensure`: criado, atualizado ou inalterado | `.resource.id` |
+| Update em `--dry-run` | `.resource.id` |
+| Criação em `--dry-run` | Não há ID; o recurso ainda não existe |
+
+Para scripts não precisarem conhecer esses envelopes, use `--output id`:
+
+```bash
+DEVICE_ID=$(netbox devices create \
+  --name server-01 \
+  --role Servidor \
+  --device-type "PowerEdge R650" \
+  --site CPTEC \
+  --ensure \
+  --output id)
+```
+
+O comando imprime somente o valor, como `30`. Também é possível usar a opção
+global: `netbox --output id devices create ...`. Se a operação não possuir ID,
+como uma criação com `--dry-run`, a CLI encerra com código 1 e explica o motivo.
+
 ### `--dry-run`
 
 O dry-run permite leitura, mas nunca envia mutações `POST`, `PATCH` ou `DELETE`.
@@ -1035,39 +1240,35 @@ set -euo pipefail
 : "${NETBOX_TOKEN:?defina NETBOX_TOKEN}"
 
 REGION_ID=$(
-  netbox --output json regions post \
+  netbox --output id regions create \
     --name Sudeste \
     --description "Região Sudeste" \
-    --ensure |
-  jq -er '.resource.id'
+    --ensure
 )
 
 SITE_ID=$(
-  netbox --output json sites post \
+  netbox --output id sites create \
     --name CPTEC \
     --region "$REGION_ID" \
-    --ensure |
-  jq -er '.resource.id'
+    --ensure
 )
 
 LOCATION_ID=$(
-  netbox --output json locations post \
+  netbox --output id locations create \
     --name Datacenter \
     --site "$SITE_ID" \
-    --ensure |
-  jq -er '.resource.id'
+    --ensure
 )
 
 RACK_ID=$(
-  netbox --output json racks post \
+  netbox --output id racks create \
     --site "$SITE_ID" \
     --name RACK-04 \
     --width 19 \
     --starting-unit 1 \
     --u-height 42 \
     --location "$LOCATION_ID" \
-    --ensure |
-  jq -er '.resource.id'
+    --ensure
 )
 
 echo "region=$REGION_ID site=$SITE_ID location=$LOCATION_ID rack=$RACK_ID"
@@ -1079,39 +1280,33 @@ NetBox.
 
 ### Cadastrar fabricante, tipo e dispositivo
 
-Função e site precisam existir; neste exemplo `DEVICE_ROLE_ID` vem de outra
-fonte porque funções de dispositivos ainda não possuem CRUD nesta CLI.
+Função e site precisam existir. Ambos podem ser informados por nome ou slug,
+sem consulta prévia do ID.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${DEVICE_ROLE_ID:?defina DEVICE_ROLE_ID}"
-: "${SITE_ID:?defina SITE_ID}"
-: "${LOCATION_ID:?defina LOCATION_ID}"
-
 MANUFACTURER_ID=$(
-  netbox --output json manufacturers post \
+  netbox --output id manufacturers create \
     --name Dell \
-    --ensure |
-  jq -er '.resource.id'
+    --ensure
 )
 
 DEVICE_TYPE_ID=$(
-  netbox --output json device-types post \
+  netbox --output id device-types create \
     --manufacturer "$MANUFACTURER_ID" \
     --model "PowerEdge R650" \
     --u-height 1 \
-    --ensure |
-  jq -er '.resource.id'
+    --ensure
 )
 
-netbox --output json devices post \
+netbox --output json devices create \
   --name server-01 \
-  --role "$DEVICE_ROLE_ID" \
+  --role Servidor \
   --device-type "$DEVICE_TYPE_ID" \
-  --site "$SITE_ID" \
-  --location "$LOCATION_ID" \
+  --site CPTEC \
+  --location Datacenter \
   --serial ABC123 \
   --ensure
 ```
@@ -1196,7 +1391,7 @@ jobs:
       - run: pip install -e .
       - run: netbox --output json status
       - run: |
-          netbox --output json manufacturers post \
+          netbox --output json manufacturers create \
             --name Dell \
             --ensure \
             --dry-run
@@ -1262,17 +1457,15 @@ netbox --output json device tree server-01 --site CPTEC
 A CLI não é uma interface genérica para todos os endpoints do NetBox. Ainda não
 há CRUD para:
 
-- funções de dispositivos e racks;
-- interfaces;
 - endereços IP, prefixes, VLANs e VRFs;
-- cabos;
+- funções de racks;
 - tenants;
 - tipos genéricos/content types;
 - operações em lote por JSON ou JSONL.
 
-Vários cadastros ainda recebem IDs de relacionamentos, como fabricante, função,
-site, rack e tipo do dispositivo. Os comandos de movimentação e consulta já
-resolvem nomes e recusam ambiguidades, mas a criação ainda depende desses IDs.
+Relacionamentos cobertos pela CLI aceitam ID, nome exato ou slug sempre que o
+recurso possui esses campos. Buscas contextuais, como rack e localização, são
+restritas ao site e recusam ambiguidades.
 
 `--ensure` executa consulta seguida de criação ou atualização. Duas automações
 concorrentes ainda podem disputar a criação do mesmo recurso; as restrições de
@@ -1283,6 +1476,6 @@ Use a ajuda instalada como fonte definitiva para a versão em execução:
 ```bash
 netbox --help
 netbox devices --help
-netbox devices post --help
+netbox devices create --help
 netbox rack tree --help
 ```

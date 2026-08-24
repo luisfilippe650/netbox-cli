@@ -29,6 +29,7 @@ class InventoryService:
     ) -> dict[str, Any]:
         if not site_name and not rack_name:
             raise InventoryFilterError("Informe --site ou --rack.")
+
         if location_name and not rack_name:
             raise InventoryFilterError("--location só pode ser usado com --rack.")
 
@@ -59,6 +60,7 @@ class InventoryService:
                 self.client, self.DEVICES_ENDPOINT, params=params
             )
         ]
+
         return {
             "filter": {"type": filter_type, "value": filter_value},
             "count": len(devices),
@@ -89,10 +91,12 @@ class InventoryService:
 def _value(value: Any) -> Any:
     if isinstance(value, dict):
         return value.get("name") or value.get("label") or value.get("display")
+
     return value
 
 
 def _ip_value(value: Any) -> Any:
     if isinstance(value, dict):
         return value.get("address") or value.get("display")
+
     return value

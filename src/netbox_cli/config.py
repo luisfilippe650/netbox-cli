@@ -21,11 +21,14 @@ class ConfigurationError(ValueError):
 
 def default_config_path() -> Path:
     configured_path = os.getenv("NETBOX_CONFIG")
+
     if configured_path:
         return Path(configured_path).expanduser()
+
     config_root = Path(
         os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))
     ).expanduser()
+
     return config_root / "netbox-cli" / "config.yaml"
 
 
@@ -50,6 +53,7 @@ class Settings:
     def token_version(self) -> int | None:
         if not self.token:
             return None
+
         return 2 if self.token.startswith("nbt_") else 1
 
 
@@ -61,13 +65,16 @@ class ConfigStore:
         if self.path.exists():
             try:
                 current_mode = stat.S_IMODE(self.path.stat().st_mode)
+
                 if current_mode != 0o600:
                     self.path.chmod(0o600)
             except OSError as error:
                 raise ConfigurationError(
                     f"Não foi possível proteger {self.path}: {error}"
                 ) from error
+
             return
+
         self.save(Settings())
 
     def load(
@@ -103,17 +110,23 @@ class ConfigStore:
             and effective_token is not None
             and effective_timeout is not None
         )
+
         if read_file:
             self.ensure_exists()
+
         settings = self._parse(self._read_mapping()) if read_file else Settings()
+
         if effective_token is None:
             settings, migrated = self._enforce_token_origin(settings)
+
             if migrated and read_file:
                 self.save(settings)
 
         raw = asdict(settings)
+
         if effective_url is not None:
             raw["url"] = effective_url
+
         if effective_timeout is not None:
             raw["timeout"] = effective_timeout
 
@@ -130,10 +143,12 @@ class ConfigStore:
             raw["token_url"] = ""
 
         settings = self._parse(raw)
+
         if require_token and not settings.token:
             raise ConfigurationError(
                 "Token não configurado. Execute 'netbox login' ou defina NETBOX_TOKEN."
             )
+
         return settings
 
     def save(self, settings: Settings) -> None:
@@ -141,6 +156,7 @@ class ConfigStore:
         serialized = yaml.safe_dump(
             asdict(settings), sort_keys=False, allow_unicode=True
         )
+
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.path.parent.chmod(0o700)
@@ -157,8 +173,10 @@ class ConfigStore:
             raise ConfigurationError(
                 f"Não foi possível ler {self.path}: {error}"
             ) from error
+
         if not isinstance(raw, dict):
             raise ConfigurationError(f"O arquivo {self.path} deve conter um mapa YAML")
+
         return raw
 
     @staticmethod
@@ -166,15 +184,19 @@ class ConfigStore:
         if settings.token and settings.token_url != settings.url:
             # Sem uma origem comprovada, o segredo não pode chegar ao cliente HTTP.
             return replace(settings, token="", token_id=None, token_url=""), True
+
         if not settings.token and (settings.token_url or settings.token_id is not None):
             return replace(settings, token_id=None, token_url=""), True
+
         return settings, False
 
     @classmethod
     def _validated_for_save(cls, settings: Settings) -> Settings:
         settings = cls._parse(asdict(settings))
+
         if settings.token and settings.token_url != settings.url:
             raise ConfigurationError("token não pertence à URL configurada")
+
         return (
             replace(settings, token_id=None, token_url="")
             if not settings.token
@@ -183,6 +205,7 @@ class ConfigStore:
 
     def _atomic_write(self, content: str) -> None:
         temporary_path: Path | None = None
+
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -195,6 +218,7 @@ class ConfigStore:
                 temporary.flush()
                 os.fsync(temporary.fileno())
                 temporary_path = Path(temporary.name)
+
             temporary_path.chmod(0o600)
             os.replace(temporary_path, self.path)
         finally:
@@ -222,6 +246,7 @@ class ConfigStore:
             token_url=settings.url if normalized_token else "",
         )
         self.save(settings)
+
         return settings
 
     def clear_token(self) -> Settings:
@@ -232,11 +257,13 @@ class ConfigStore:
             token_url="",
         )
         self.save(settings)
+
         return settings
 
     def save_url(self, url: str) -> Settings:
         settings = self.load(use_environment=False)
         normalized_url = _validated_url(url, field_name="url")
+
         if normalized_url != settings.url:
             settings = replace(
                 settings,
@@ -245,7 +272,9 @@ class ConfigStore:
                 token_id=None,
                 token_url="",
             )
+
         self.save(settings)
+
         return settings
 
     @staticmethod
@@ -254,16 +283,20 @@ class ConfigStore:
         raw_token = raw.get("token", "")
         raw_token_id = raw.get("token_id")
         raw_token_url = raw.get("token_url", "")
+
         if not isinstance(raw_url, str):
             raise ConfigurationError("url deve ser um texto")
+
         if raw_token is not None and not isinstance(raw_token, str):
             raise ConfigurationError("token deve ser um texto")
+
         if raw_token_id is not None and (
             isinstance(raw_token_id, bool)
             or not isinstance(raw_token_id, int)
             or raw_token_id <= 0
         ):
             raise ConfigurationError("token_id deve ser um inteiro maior que zero")
+
         if raw_token_url is not None and not isinstance(raw_token_url, str):
             raise ConfigurationError("token_url deve ser um texto")
 
@@ -274,17 +307,22 @@ class ConfigStore:
             if raw_token_url
             else ""
         )
+
         try:
             raw_timeout = raw.get("timeout", DEFAULT_TIMEOUT)
+
             if isinstance(raw_timeout, bool):
                 raise TypeError
+
             parsed_timeout = float(raw_timeout)
         except (TypeError, ValueError) as error:
             raise ConfigurationError("timeout deve ser um número") from error
 
         if not isfinite(parsed_timeout) or parsed_timeout <= 0:
             raise ConfigurationError("timeout deve ser um número finito maior que zero")
+
         timeout = int(parsed_timeout) if parsed_timeout.is_integer() else parsed_timeout
+
         return Settings(
             url=url,
             token=token,
@@ -296,8 +334,10 @@ class ConfigStore:
 
 def _validated_url(value: str, *, field_name: str) -> str:
     normalized = value.strip().rstrip("/")
+
     if not normalized:
         raise ConfigurationError(f"{field_name} não pode ficar vazia")
+
     try:
         parsed_url = urlsplit(normalized)
         parsed_url.port
@@ -305,6 +345,7 @@ def _validated_url(value: str, *, field_name: str) -> str:
         raise ConfigurationError(
             f"{field_name} deve ser uma URL HTTP ou HTTPS válida"
         ) from error
+
     if (
         parsed_url.scheme not in {"http", "https"}
         or not parsed_url.hostname
@@ -314,4 +355,5 @@ def _validated_url(value: str, *, field_name: str) -> str:
         or parsed_url.fragment
     ):
         raise ConfigurationError(f"{field_name} deve ser uma URL HTTP ou HTTPS válida")
+
     return normalized

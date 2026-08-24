@@ -22,12 +22,14 @@ class SearchService:
 
     def search(self, query: str, *, limit: int = 10) -> dict[str, Any]:
         results: list[dict[str, Any]] = []
+
         for resource_type, endpoint in self.RESOURCES:
             response = self.client.get(endpoint, params={"q": query, "limit": limit})
             results.extend(
                 self._normalize(resource_type, item)
                 for item in get_result_list(response)
             )
+
         return {"query": query, "count": len(results), "results": results}
 
     @staticmethod
@@ -37,23 +39,31 @@ class SearchService:
             "id": item.get("id"),
             "name": item.get("name") or item.get("address") or item.get("display"),
         }
+
         for field in ("rack", "site", "location", "status"):
             value = item.get(field)
+
             if isinstance(value, dict):
                 value = value.get("name") or value.get("label") or value.get("display")
+
             if value is not None:
                 result[field] = value
 
         if resource_type == "device":
             primary = item.get("primary_ip4") or item.get("primary_ip")
+
             if isinstance(primary, dict):
                 result["ip"] = primary.get("address") or primary.get("display")
         elif resource_type == "ip_address":
             result["address"] = item.get("address")
             assigned = item.get("assigned_object")
+
             if isinstance(assigned, dict):
                 device = assigned.get("device")
+
                 if isinstance(device, dict):
                     result["device"] = device.get("name") or device.get("display")
+
                 result["interface"] = assigned.get("name") or assigned.get("display")
+
         return result

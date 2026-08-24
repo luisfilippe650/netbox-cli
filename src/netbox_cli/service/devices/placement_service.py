@@ -26,6 +26,7 @@ class DevicePlacementService:
     ) -> dict[str, Any]:
         _validate_position(position)
         device = get_device(self.client, name, site_name=device_site_name)
+
         return self._place(
             device,
             name=name,
@@ -49,12 +50,15 @@ class DevicePlacementService:
     ) -> dict[str, Any]:
         _validate_position(position)
         device = get_device(self.client, name, site_name=device_site_name)
+
         if device.get("rack") is not None:
             rack_label = nested_value(device["rack"], "name") or "rack desconhecido"
+
             raise NetBoxCLIError(
                 f"Dispositivo '{name}' já está alocado em '{rack_label}'. "
                 "Use 'netbox device move' para alterar sua posição."
             )
+
         result = self._place(
             device,
             name=name,
@@ -65,14 +69,17 @@ class DevicePlacementService:
             dry_run=dry_run,
         )
         result["allocated"] = result.pop("moved")
+
         if dry_run:
             result["action"] = "would_allocate"
+
         return result
 
     def deallocate(
         self, name: str, *, site_name: str | None = None, dry_run: bool = False
     ) -> dict[str, Any]:
         device = get_device(self.client, name, site_name=site_name)
+
         if dry_run:
             return {
                 "action": "would_deallocate",
@@ -83,10 +90,12 @@ class DevicePlacementService:
                 "previous_position": device.get("position"),
                 "payload": {"rack": None, "position": None, "face": None},
             }
+
         updated = self.client.patch(
             f"{DEVICES_ENDPOINT}{device['id']}/",
             {"rack": None, "position": None, "face": None},
         )
+
         return {
             "deallocated": True,
             "device": updated.get("name", name) if isinstance(updated, dict) else name,
@@ -117,12 +126,15 @@ class DevicePlacementService:
             "face": "front",
         }
         rack_site = rack.get("site")
+
         if isinstance(rack_site, dict) and rack_site.get("id") is not None:
             payload["site"] = rack_site["id"]
+
         rack_location = rack.get("location")
         payload["location"] = (
             rack_location.get("id") if isinstance(rack_location, dict) else None
         )
+
         if dry_run:
             return {
                 "action": "would_move",
@@ -135,7 +147,9 @@ class DevicePlacementService:
                 "face": "front",
                 "payload": payload,
             }
+
         updated = self.client.patch(f"{DEVICES_ENDPOINT}{device['id']}/", payload)
+
         return {
             "moved": True,
             "device": updated.get("name", name) if isinstance(updated, dict) else name,

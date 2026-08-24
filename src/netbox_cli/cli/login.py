@@ -12,7 +12,7 @@ from netbox_cli.exceptions import NetBoxCLIError
 from netbox_cli.presentation.errors import show_error
 from netbox_cli.presentation.menu import ChoiceMenu, MenuOption
 from netbox_cli.service.auth_service import AuthService
-from netbox_cli.runtime import current_options
+from netbox_cli.runtime import client_request_options, current_options
 
 console = Console()
 menu = ChoiceMenu(console)
@@ -22,6 +22,7 @@ def login() -> None:
     """Autentica no NetBox e salva o token da sessão local."""
     options = current_options()
     store = ConfigStore(options.config_path)
+
     try:
         store.ensure_exists()
         settings = store.load(url=options.url, timeout=options.timeout)
@@ -30,9 +31,11 @@ def login() -> None:
         raise
     except (ConfigurationError, NetBoxCLIError, ValueError) as error:
         show_error(error, console=console)
+
         raise typer.Exit(code=1) from error
     except (EOFError, KeyboardInterrupt) as error:
         console.print("\n[yellow]Login cancelado.[/yellow]")
+
         raise typer.Exit(code=1) from error
 
 
@@ -52,21 +55,28 @@ def login_interactively(
     while True:
         username = Prompt.ask("Usuário").strip()
         password = Prompt.ask("Senha", password=True)
-        anonymous_client = NetBoxClient(settings.url, timeout=settings.timeout)
+        anonymous_client = NetBoxClient(
+            settings.url,
+            timeout=settings.timeout,
+            **client_request_options(),
+        )
         provisioned = None
         authenticated_client = None
+
         try:
             provisioned = AuthService(anonymous_client).provision(username, password)
             authenticated_client = NetBoxClient(
                 settings.url,
                 provisioned.value,
                 timeout=settings.timeout,
+                **client_request_options(),
             )
             authenticated_service = AuthService(authenticated_client)
             authenticated_service.validate()
             authenticated_service.require_superuser()
 
             previous_token_id = settings.token_id
+
             if settings.token and previous_token_id is None:
                 previous_token_id = authenticated_service.find_token_id(settings.token)
 
@@ -76,6 +86,7 @@ def login_interactively(
                 url=settings.url,
                 timeout=settings.timeout,
             )
+
             # O token novo é persistido antes da revogação para que uma falha
             # de escrita local nunca deixe o usuário sem o token anterior.
             if previous_token_id and previous_token_id != provisioned.id:
@@ -94,11 +105,13 @@ def login_interactively(
                     # A falha original continua sendo a informação útil; uma
                     # eventual falha de limpeza não deve ocultá-la.
                     pass
+
             show_error(error, console=console)
             retry = menu.ask(
                 "Tentar novamente?",
                 [MenuOption("yes", "Sim"), MenuOption("no", "Não")],
             )
+
             if retry == "no":
                 raise typer.Exit(code=1) from error
         else:
@@ -109,8 +122,10 @@ def login_interactively(
                     border_style="green",
                 )
             )
+
             return authenticated_settings
         finally:
             if authenticated_client is not None:
                 authenticated_client.close()
+
             anonymous_client.close()

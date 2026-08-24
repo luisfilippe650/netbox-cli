@@ -26,16 +26,16 @@ from netbox_cli.service.infrastructure_service import InfrastructureService
 app = typer.Typer(help="Gerencia racks.", no_args_is_help=True)
 
 
-@app.command("post")
+@app.command("create")
 def post_rack(
     ctx: typer.Context,
-    site: Annotated[int, typer.Option("--site", help="ID do site.", min=1)],
+    site: Annotated[str, typer.Option("--site", help="ID, nome ou slug do site.")],
     name: Annotated[str, typer.Option("--name", "-n", help="Nome do rack.")],
     width: Annotated[int, typer.Option("--width", help="Largura: 10, 19, 21 ou 23.")],
     starting_unit: Annotated[int, typer.Option("--starting-unit", min=1)],
     u_height: Annotated[int, typer.Option("--u-height", min=1)],
     location: Annotated[
-        int | None, typer.Option("--location", help="ID da location.", min=1)
+        str | None, typer.Option("--location", help="ID, nome ou slug da localização.")
     ] = None,
     group: Annotated[int | None, typer.Option("--group", min=1)] = None,
     role: Annotated[
@@ -90,7 +90,7 @@ def get_rack(
     )
 
 
-@app.command("all")
+@app.command("list")
 def all_racks(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
     limit: Annotated[int | None, typer.Option(min=0)] = 0,
@@ -104,16 +104,22 @@ def all_racks(
     )
 
 
+app.command("post", hidden=True)(post_rack)
+app.command("all", hidden=True)(all_racks)
+
+
 @app.command("update")
 def update_rack(
     rack_id: Annotated[int, typer.Argument(min=1)],
-    site: Annotated[int | None, typer.Option("--site", min=1)] = None,
+    site: Annotated[
+        str | None, typer.Option("--site", help="ID, nome ou slug do site.")
+    ] = None,
     name: Annotated[str | None, typer.Option("--name", "-n")] = None,
     width: Annotated[int | None, typer.Option("--width")] = None,
     starting_unit: Annotated[int | None, typer.Option("--starting-unit", min=1)] = None,
     u_height: Annotated[int | None, typer.Option("--u-height", min=1)] = None,
     location: Annotated[
-        int | None, typer.Option("--location", help="ID da location.", min=1)
+        str | None, typer.Option("--location", help="ID, nome ou slug da localização.")
     ] = None,
     group: Annotated[int | None, typer.Option("--group", min=1)] = None,
     role: Annotated[int | None, typer.Option("--role", "--function", min=1)] = None,
@@ -170,7 +176,7 @@ def delete_rack(
 
 @app.command("tree")
 def rack_tree(
-    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    name: Annotated[str, typer.Argument(help="ID ou nome exato do rack.")],
     site: Annotated[str | None, typer.Option("--site")] = None,
     location: Annotated[str | None, typer.Option("--location")] = None,
     output: Annotated[
@@ -190,7 +196,7 @@ def rack_tree(
 
 @app.command("show")
 def show_rack(
-    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    name: Annotated[str, typer.Argument(help="ID ou nome exato do rack.")],
     site: Annotated[str | None, typer.Option("--site")] = None,
     location: Annotated[str | None, typer.Option("--location")] = None,
     face: Annotated[
@@ -201,8 +207,10 @@ def show_rack(
     ] = DetailOutputFormat.human,
 ) -> None:
     """Desenha a elevação de um rack."""
+
     if face not in {"front", "rear"}:
         raise typer.BadParameter("use 'front' ou 'rear'", param_hint="--face")
+
     result = execute_operation(
         lambda: make_service(RacksService).elevation(
             name, face=face, site_name=site, location_name=location
@@ -213,7 +221,7 @@ def show_rack(
 
 @app.command("available")
 def available_rack_positions(
-    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    name: Annotated[str, typer.Argument(help="ID ou nome exato do rack.")],
     height: Annotated[float, typer.Option("--height", min=0.5)],
     site: Annotated[str | None, typer.Option("--site")] = None,
     location: Annotated[str | None, typer.Option("--location")] = None,
@@ -225,8 +233,10 @@ def available_rack_positions(
     ] = DetailOutputFormat.human,
 ) -> None:
     """Lista posições contíguas disponíveis para um equipamento."""
+
     if face not in {"front", "rear"}:
         raise typer.BadParameter("use 'front' ou 'rear'", param_hint="--face")
+
     result = execute_operation(
         lambda: make_service(RacksService).available(
             name,
@@ -241,7 +251,7 @@ def available_rack_positions(
 
 @app.command("capacity")
 def rack_capacity(
-    name: Annotated[str, typer.Argument(help="Nome exato do rack.")],
+    name: Annotated[str, typer.Argument(help="ID ou nome exato do rack.")],
     site: Annotated[str | None, typer.Option("--site")] = None,
     location: Annotated[str | None, typer.Option("--location")] = None,
     output: Annotated[

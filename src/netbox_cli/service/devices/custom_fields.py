@@ -27,6 +27,7 @@ class DeviceCustomFieldValidator:
             for field in definitions
             if _is_required_and_empty(field, custom_fields)
         ]
+
         if missing:
             raise RequiredCustomFieldsError(
                 "Campos personalizados obrigatórios ausentes: " + ", ".join(missing)
@@ -38,11 +39,14 @@ def _is_required_and_empty(
 ) -> bool:
     if not field.get("required"):
         return False
+
     name = str(field.get("name", ""))
+
     return name not in custom_fields or custom_fields[name] in (None, "", [])
 
 
 def _field_description(field: dict[str, Any]) -> str:
     name = str(field.get("name", ""))
     label = str(field.get("label") or name)
+
     return f"{name} ({label})" if label != name else name

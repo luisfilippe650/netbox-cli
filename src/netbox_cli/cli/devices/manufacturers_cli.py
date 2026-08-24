@@ -8,15 +8,16 @@ from netbox_cli.cli.common import (
     execute,
     explicit_update_fields,
     make_service,
+    update_resource,
 )
 from netbox_cli.presentation.output import OutputFormat
-from netbox_cli.schemas.devices import AddManufacturer
+from netbox_cli.schemas.devices import AddManufacturer, UpdateManufacturer
 from netbox_cli.service.devices import ManufacturersService
 
 app = typer.Typer(help="Gerencia fabricantes.", no_args_is_help=True)
 
 
-@app.command("post")
+@app.command("create")
 def post_manufacturer(
     ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n")],
@@ -58,7 +59,7 @@ def get_manufacturer(
     )
 
 
-@app.command("all")
+@app.command("list")
 def all_manufacturers(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
     limit: Annotated[int | None, typer.Option(min=0)] = 0,
@@ -72,7 +73,31 @@ def all_manufacturers(
     )
 
 
-app.command("list", hidden=True)(all_manufacturers)
+app.command("post", hidden=True)(post_manufacturer)
+app.command("all", hidden=True)(all_manufacturers)
+
+
+@app.command("update")
+def update_manufacturer(
+    manufacturer_id: Annotated[int, typer.Argument(min=1)],
+    name: Annotated[str | None, typer.Option("--name", "-n")] = None,
+    comments: Annotated[
+        str | None, typer.Option("--comments", "--comment")
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+) -> None:
+    """Atualiza somente os campos informados de um fabricante."""
+    execute(
+        lambda: update_resource(
+            ManufacturersService,
+            manufacturer_id,
+            UpdateManufacturer(name=name, comments=comments),
+            dry_run=dry_run,
+        ),
+        output=output,
+        title="Fabricante atualizado",
+    )
 
 
 @app.command("delete")

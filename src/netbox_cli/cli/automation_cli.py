@@ -14,6 +14,8 @@ from netbox_cli.presentation.details import (
     render_trace,
     render_infrastructure_tree,
 )
+from netbox_cli.presentation.table_options import TableOptions, parse_columns
+from netbox_cli.runtime import client_request_options
 from netbox_cli.service.devices import DevicesService
 from netbox_cli.service.inventory_service import InventoryService
 from netbox_cli.service.infrastructure_service import InfrastructureService
@@ -58,8 +60,30 @@ def inventory(
     output: Annotated[
         InventoryOutputFormat, typer.Option("--output", "-o")
     ] = InventoryOutputFormat.human,
+    wide: Annotated[
+        bool, typer.Option("--wide", help="Exibe todas as colunas disponíveis.")
+    ] = False,
+    no_truncate: Annotated[
+        bool,
+        typer.Option(
+            "--no-truncate",
+            help="Preserva valores completos com quebra de linha.",
+        ),
+    ] = False,
+    columns: Annotated[
+        str | None,
+        typer.Option(
+            "--columns",
+            help="Colunas separadas por vírgula, na ordem desejada.",
+        ),
+    ] = None,
 ) -> None:
     """Lista o inventário de dispositivos de um site ou rack."""
+    table_options = TableOptions(
+        wide=wide,
+        no_truncate=no_truncate,
+        columns=parse_columns(columns),
+    )
     result = execute_operation(
         lambda: make_service(InventoryService).inventory(
             site_name=site,
@@ -67,7 +91,11 @@ def inventory(
             location_name=location,
         )
     )
-    render_inventory(result, output)
+    render_inventory(
+        result,
+        output,
+        table_options=table_options,
+    )
 
 
 def trace(
@@ -96,7 +124,9 @@ def status(
         settings.netbox_url,
         settings.netbox_token,
         timeout=settings.timeout,
+        **client_request_options(),
     )
+
     try:
         result = StatusService(
             client,
@@ -106,7 +136,9 @@ def status(
         ).check()
     finally:
         client.close()
+
     render_status(result, output)
+
     if not result.get("authorized"):
         raise typer.Exit(code=1)
 

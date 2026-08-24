@@ -33,15 +33,18 @@ class CableTraceService:
             for item in interfaces
             if str(item.get("name", "")).casefold() == interface_name.casefold()
         ]
+
         if not exact:
             raise ResourceNotFoundError(
                 f"Interface '{interface_name}' não encontrada em '{name}'."
             )
+
         interface = exact[0]
         raw_path = self.client.get(f"{INTERFACES_ENDPOINT}{interface['id']}/trace/")
         segments = raw_path if isinstance(raw_path, list) else []
         normalized = [_normalize_segment(item) for item in segments]
         normalized = [item for item in normalized if item is not None]
+
         return {
             "device": device.get("name") or name,
             "interface": interface.get("name") or interface_name,
@@ -53,14 +56,17 @@ class CableTraceService:
 def _normalize_segment(segment: Any) -> dict[str, Any] | None:
     if not isinstance(segment, list) or len(segment) != 3:
         return None
+
     near_ends, cable, far_ends = segment
     normalized_cable = None
+
     if isinstance(cable, dict):
         normalized_cable = {
             "id": cable.get("id"),
             "label": cable.get("label") or cable.get("display"),
             "status": nested_value(cable.get("status"), "label"),
         }
+
     return {
         "near": [_normalize_termination(item) for item in _items(near_ends)],
         "cable": normalized_cable,

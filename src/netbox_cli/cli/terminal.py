@@ -16,7 +16,7 @@ from netbox_cli.presentation.errors import show_error
 from netbox_cli.presentation.menu import ChoiceMenu, MenuOption
 from netbox_cli.service.auth_service import AuthService
 from netbox_cli.service.status_service import StatusResult, StatusService
-from netbox_cli.runtime import current_options
+from netbox_cli.runtime import client_request_options, current_options
 
 console = Console()
 menu = ChoiceMenu(console)
@@ -45,7 +45,9 @@ def _check_status(settings: Settings) -> StatusResult:
         settings.url,
         settings.token,
         timeout=min(float(settings.timeout), STATUS_TIMEOUT),
+        **client_request_options(),
     )
+
     try:
         return StatusService(
             client,
@@ -63,9 +65,11 @@ def _header(
     status: StatusResult,
 ) -> None:
     details = status.get("user_details") or {}
+
     if status.get("authorized"):
         username = escape(str(status.get("user") or "usuário"))
         identity = f"[bold green]Autenticado como {username}[/bold green]"
+
         if isinstance(details, dict) and details.get("email"):
             identity += f"\n[dim]{escape(str(details['email']))}[/dim]"
     elif status.get("authenticated"):
@@ -79,8 +83,10 @@ def _header(
 
     http_status = status.get("status_code")
     connection = "conectado" if status.get("reachable") else "sem conexão"
+
     if http_status:
         connection += f" • HTTP {http_status}"
+
     console.print(
         Panel.fit(
             "[bold cyan]NetBox CLI[/bold cyan]\n"
@@ -95,18 +101,24 @@ def _header(
 def _change_url(store: ConfigStore, settings: Settings) -> None:
     url = Prompt.ask("URL do NetBox", default=settings.url)
     updated = store.save_url(url)
+
     if updated.url != settings.url:
         _revoke_stored_token(settings)
+
     message = "URL atualizada."
+
     if settings.token and not updated.token:
         message += " O token foi limpo; faça login no novo servidor."
+
     _success(message)
 
 
 def _change_timeout(store: ConfigStore, settings: Settings) -> None:
     timeout = FloatPrompt.ask("Timeout em segundos", default=settings.timeout)
+
     if timeout <= 0:
         raise ConfigurationError("O timeout deve ser maior que zero")
+
     parsed_timeout = float(timeout)
     normalized = int(parsed_timeout) if parsed_timeout.is_integer() else parsed_timeout
     persisted = store.load(use_environment=False)
@@ -117,12 +129,15 @@ def _change_timeout(store: ConfigStore, settings: Settings) -> None:
 def _clear_token(store: ConfigStore, settings: Settings) -> None:
     if not settings.token:
         console.print("[yellow]Nenhum token está armazenado.[/yellow]")
+
         return
+
     confirmation = menu.ask(
         "Limpar o token armazenado?",
         [MenuOption("yes", "Sim"), MenuOption("no", "Não")],
         selected=1,
     )
+
     if confirmation == "yes":
         _revoke_stored_token(settings)
         store.clear_token()
@@ -132,10 +147,18 @@ def _clear_token(store: ConfigStore, settings: Settings) -> None:
 def _revoke_stored_token(settings: Settings) -> None:
     if not settings.token:
         return
-    client = NetBoxClient(settings.url, settings.token, timeout=settings.timeout)
+
+    client = NetBoxClient(
+        settings.url,
+        settings.token,
+        timeout=settings.timeout,
+        **client_request_options(),
+    )
+
     try:
         service = AuthService(client)
         token_id = settings.token_id or service.find_token_id(settings.token)
+
         if token_id is not None:
             service.revoke(token_id)
         else:
@@ -165,8 +188,10 @@ def _configuration_menu(store: ConfigStore) -> None:
             )
         )
         action = menu.ask("O que deseja configurar?", CONFIG_OPTIONS)
+
         if action == "back":
             return
+
         try:
             if action == "url":
                 _change_url(store, settings)
@@ -182,8 +207,10 @@ def run_terminal() -> None:
     """Interface Rich exclusiva para login e configuração."""
     options = current_options()
     store = ConfigStore(options.config_path)
+
     try:
         store.ensure_exists()
+
         while True:
             settings = store.load(
                 url=options.url,
@@ -193,19 +220,25 @@ def run_terminal() -> None:
             status = _check_status(settings)
             _header(settings, store, status)
             action = menu.ask("Escolha uma opção", MAIN_OPTIONS)
+
             if action == "quit":
                 console.print("[cyan]Até logo![/cyan]")
+
                 return
+
             if action == "settings":
                 _configuration_menu(store)
                 continue
+
             try:
                 login_interactively(store, settings)
             except typer.Exit:
                 continue
     except (ConfigurationError, NetBoxCLIError, ValueError) as error:
         show_error(error, console=console)
+
         raise typer.Exit(code=1) from error
     except (EOFError, KeyboardInterrupt) as error:
         console.print("\n[cyan]Até logo![/cyan]")
+
         raise typer.Exit(code=0) from error

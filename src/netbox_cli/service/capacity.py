@@ -43,6 +43,7 @@ def rack_capacity(
 ) -> CapacityResult:
     rack_spec = RackSpec.from_api(rack)
     occupied = rack_occupancy(client, rack)
+
     return capacity_from_slots(rack_spec, occupied)
 
 
@@ -72,8 +73,10 @@ def rack_occupancy(
         params={"rack_id": rack_spec.id, "limit": 0},
     )
     reserved = set().union(*(_reservation_slots(item) for item in reservations))
+
     for face in requested_faces:
         occupancy.slots(face).update(reserved)
+
     return {face.value: occupancy.slots(face) for face in requested_faces}
 
 
@@ -92,28 +95,36 @@ def site_capacities(
 
     for device in devices:
         placement = DevicePlacement.from_api(device)
+
         if placement is None:
             continue
+
         if placement.rack_id not in occupancy_by_rack:
             raise CapacityError(
                 f"Dispositivo no rack {placement.rack_id}: rack não retornado pela API."
             )
+
         device_type = type_by_id.get(placement.device_type_id)
+
         if device_type is None:
             raise CapacityError(
                 "Dispositivo com tipo "
                 f"{placement.device_type_id}: tipo não retornado pela API."
             )
+
         occupied = _device_slots(placement, device_type)
         faces = tuple(RackFace) if device_type.full_depth else (placement.face,)
+
         for face in faces:
             occupancy_by_rack[placement.rack_id].slots(face).update(occupied)
 
     for reservation in reservations:
         context = _reservation_context(reservation)
         rack_id = required_id(reservation.get("rack"), field="rack", context=context)
+
         if rack_id not in occupancy_by_rack:
             raise CapacityError(f"{context}: rack {rack_id} não retornado pela API.")
+
         occupancy_by_rack[rack_id].reserve_both_faces(
             _reservation_slots(reservation)
         )
@@ -130,6 +141,7 @@ def capacity_from_slots(
 ) -> CapacityResult:
     front = occupied_by_face.get(RackFace.FRONT.value)
     rear = occupied_by_face.get(RackFace.REAR.value)
+
     if front is None or rear is None:
         raise CapacityError("Ocupação do rack deve informar as faces front e rear.")
 
@@ -137,6 +149,7 @@ def capacity_from_slots(
     rear_u = Decimal(len(rear)) * HALF_UNIT
     occupied_u = Decimal(len(front | rear)) * HALF_UNIT
     free_u = max(rack.height - occupied_u, Decimal(0))
+
     return {
         "total_u": _clean_number(rack.height),
         "occupied_u": _clean_number(occupied_u),
@@ -159,9 +172,11 @@ def _occupied_slots(
     units: Sequence[Mapping[str, Any]], rack_id: int
 ) -> set[Decimal]:
     occupied: set[Decimal] = set()
+
     for unit in units:
         if not unit.get("occupied"):
             continue
+
         occupied.add(
             decimal_value(
                 unit.get("id"),
@@ -169,6 +184,7 @@ def _occupied_slots(
                 context=f"Unidade ocupada do rack {rack_id}",
             )
         )
+
     return occupied
 
 
@@ -179,11 +195,14 @@ def _device_slots(
         raise CapacityError(
             f"Tipo de dispositivo {device_type.id}: dispositivo posicionado não pode ter 0U."
         )
+
     slot_count = int(device_type.height / HALF_UNIT)
+
     if device_type.height % HALF_UNIT:
         raise CapacityError(
             f"Tipo de dispositivo {device_type.id}: u_height deve ser múltiplo de 0.5."
         )
+
     return {
         placement.position + HALF_UNIT * offset for offset in range(slot_count)
     }
@@ -192,19 +211,26 @@ def _device_slots(
 def _reservation_slots(reservation: Mapping[str, Any]) -> set[Decimal]:
     context = _reservation_context(reservation)
     raw_units = reservation.get("units") or []
+
     if not isinstance(raw_units, list):
         raise CapacityError(f"{context}: campo 'units' deve ser uma lista.")
+
     slots: set[Decimal] = set()
+
     for raw_unit in raw_units:
         unit = decimal_value(raw_unit, field="units", context=context)
+
         if unit <= 0:
             raise CapacityError(f"{context}: unidades devem ser maiores que zero.")
+
         slots.update((unit, unit + HALF_UNIT))
+
     return slots
 
 
 def _reservation_context(reservation: Mapping[str, Any]) -> str:
     identifier = reservation.get("id")
+
     return f"Reserva de rack '{identifier}'" if identifier is not None else "Reserva de rack"
 
 

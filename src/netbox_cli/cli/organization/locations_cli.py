@@ -8,9 +8,10 @@ from netbox_cli.cli.common import (
     execute,
     explicit_update_fields,
     make_service,
+    update_resource,
 )
 from netbox_cli.presentation.output import OutputFormat
-from netbox_cli.schemas.organization.locations_dto import AddLocation
+from netbox_cli.schemas.organization.locations_dto import AddLocation, UpdateLocation
 from netbox_cli.service.organization.locations_service import LocationsService
 
 app = typer.Typer(help="Gerencia locais do NetBox.", no_args_is_help=True)
@@ -19,11 +20,11 @@ app = typer.Typer(help="Gerencia locais do NetBox.", no_args_is_help=True)
 def post_location(
     ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n")],
-    site: Annotated[int, typer.Option("--site", help="ID do site.", min=1)],
+    site: Annotated[str, typer.Option("--site", help="ID, nome ou slug do site.")],
     slug: Annotated[str | None, typer.Option()] = None,
     status: Annotated[str, typer.Option()] = "active",
     parent: Annotated[
-        int | None, typer.Option("--parent", help="ID do local pai.", min=1)
+        str | None, typer.Option("--parent", help="ID, nome ou slug do local pai.")
     ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
     ensure: Annotated[
@@ -58,11 +59,11 @@ def post_location(
     )
 
 
-app.command("post")(post_location)
-app.command("create", hidden=True)(post_location)
+app.command("create")(post_location)
+app.command("post", hidden=True)(post_location)
 
 
-@app.command("view")
+@app.command("get")
 def view_location(
     location_id: Annotated[int, typer.Argument(min=1)],
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
@@ -73,6 +74,9 @@ def view_location(
         output=output,
         title="Local",
     )
+
+
+app.command("view", hidden=True)(view_location)
 
 
 @app.command("list")
@@ -86,6 +90,42 @@ def list_locations(
         lambda: make_service(LocationsService).list(search=search, limit=limit),
         output=output,
         title="Locais",
+    )
+
+
+@app.command("update")
+def update_location(
+    location_id: Annotated[int, typer.Argument(min=1)],
+    name: Annotated[str | None, typer.Option("--name", "-n")] = None,
+    site: Annotated[
+        str | None, typer.Option("--site", help="ID, nome ou slug do site.")
+    ] = None,
+    slug: Annotated[str | None, typer.Option("--slug")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    parent: Annotated[
+        str | None, typer.Option("--parent", help="ID, nome ou slug do local pai.")
+    ] = None,
+    description: Annotated[str | None, typer.Option("--description", "-d")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+) -> None:
+    """Atualiza somente os campos informados de um local."""
+    execute(
+        lambda: update_resource(
+            LocationsService,
+            location_id,
+            UpdateLocation(
+                name=name,
+                site=site,
+                slug=slug,
+                status=status,
+                parent=parent,
+                description=description,
+            ),
+            dry_run=dry_run,
+        ),
+        output=output,
+        title="Local atualizado",
     )
 
 

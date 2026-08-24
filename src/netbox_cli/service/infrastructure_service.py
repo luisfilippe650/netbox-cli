@@ -22,6 +22,7 @@ class TreeNode:
 
     def sort(self) -> None:
         self.children.sort(key=lambda item: item.name.casefold())
+
         for child in self.children:
             child.sort()
 
@@ -32,9 +33,11 @@ class TreeNode:
             "name": self.name,
             "children": [child.as_dict() for child in self.children],
         }
+
         if self.type == "device":
             result["position"] = self.position
             result["status"] = self.status
+
         return result
 
 
@@ -70,6 +73,7 @@ class InfrastructureService:
             }
         else:
             resources = {kind: self._list(kind) for kind in self.ENDPOINTS}
+
         root = TreeNode("root", None, "NetBox")
         nodes = {
             kind: {
@@ -82,54 +86,75 @@ class InfrastructureService:
 
         for item in resources["region"]:
             region_node = nodes["region"].get(item.get("id"))
+
             if not region_node:
                 continue
+
             parent = nodes["region"].get(_id(item.get("parent")), root)
             parent.add(region_node)
+
         orphan_region = TreeNode("group", None, "Sem região")
+
         for item in resources["site"]:
             site_node = nodes["site"].get(item.get("id"))
+
             if not site_node:
                 continue
+
             region_id = _id(item.get("region"))
             parent = nodes["region"].get(region_id, orphan_region)
             parent.add(site_node)
+
         if orphan_region.children:
             root.add(orphan_region)
 
         for item in resources["location"]:
             location_node = nodes["location"].get(item.get("id"))
+
             if not location_node:
                 continue
+
             parent_id = _id(item.get("parent"))
             parent = nodes["location"].get(parent_id)
+
             if parent is None:
                 parent = nodes["site"].get(_id(item.get("site")), root)
+
             parent.add(location_node)
 
         for item in resources["rack"]:
             rack_node = nodes["rack"].get(item.get("id"))
+
             if not rack_node:
                 continue
+
             parent = nodes["location"].get(_id(item.get("location")))
+
             if parent is None:
                 parent = nodes["site"].get(_id(item.get("site")), root)
+
             parent.add(rack_node)
 
         for item in resources["device"]:
             device_node = nodes["device"].get(item.get("id"))
+
             if not device_node:
                 continue
+
             parent = nodes["rack"].get(_id(item.get("rack")))
+
             if parent is None:
                 parent = nodes["location"].get(_id(item.get("location")))
+
             if parent is None:
                 parent = nodes["site"].get(_id(item.get("site")), root)
+
             parent.add(device_node)
 
         root.sort()
         result = root.as_dict()
         result["counts"] = {kind + "s": len(items) for kind, items in resources.items()}
+
         return result
 
     def rack_tree(
@@ -149,6 +174,7 @@ class InfrastructureService:
         devices = self._list("device", rack_id=rack["id"])
         children = [_node("device", device).as_dict() for device in devices]
         children.sort(key=lambda item: str(item.get("name", "")).casefold())
+
         return {
             "type": "rack",
             "id": rack.get("id"),
@@ -175,6 +201,7 @@ class InfrastructureService:
         children: list[dict[str, Any]] = []
 
         location_path = _device_location_path(details)
+
         if location_path:
             children.append(
                 {
@@ -185,6 +212,7 @@ class InfrastructureService:
             )
 
         interface_nodes, assigned_addresses = _interface_nodes(details)
+
         if interface_nodes:
             children.append(
                 {
@@ -203,6 +231,7 @@ class InfrastructureService:
             for ip in details.get("ip_addresses", [])
             if isinstance(ip, dict) and str(ip.get("address")) not in assigned_addresses
         ]
+
         if unassigned_ips:
             children.append(
                 {
@@ -213,6 +242,7 @@ class InfrastructureService:
             )
 
         component_nodes = _component_nodes(details)
+
         if component_nodes:
             children.append(
                 {
@@ -243,18 +273,23 @@ class InfrastructureService:
         region_id = _id(site.get("region"))
         regions = []
         visited = set()
+
         while region_id is not None and region_id not in visited:
             visited.add(region_id)
             region = self.client.get(f"{self.ENDPOINTS['region']}{region_id}/")
+
             if not isinstance(region, dict):
                 break
+
             regions.append(region)
             region_id = _id(region.get("parent"))
+
         return regions
 
 
 def _node(kind: str, item: dict[str, Any]) -> TreeNode:
     status = item.get("status")
+
     return TreeNode(
         type=kind,
         id=item.get("id"),
@@ -279,12 +314,14 @@ def _name(item: dict[str, Any]) -> str:
 def _related_name(value: Any) -> Any:
     if isinstance(value, dict):
         return value.get("name") or value.get("display")
+
     return value
 
 
 def _related_label(value: Any) -> Any:
     if isinstance(value, dict):
         return value.get("label") or value.get("value")
+
     return value
 
 
@@ -296,21 +333,28 @@ def _device_location_path(details: dict[str, Any]) -> dict[str, Any] | None:
     ]
     root: dict[str, Any] | None = None
     current: dict[str, Any] | None = None
+
     for node_type, value in levels:
         if not value:
             continue
+
         node: dict[str, Any] = {
             "type": node_type,
             "name": str(value),
             "children": [],
         }
+
         if node_type == "rack":
             node["position"] = details.get("position")
+
         if root is None:
             root = node
+
         if current is not None:
             current["children"].append(node)
+
         current = node
+
     return root
 
 
@@ -318,30 +362,37 @@ def _interface_nodes(
     details: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], set[str]]:
     addresses_by_interface: dict[str, list[str]] = {}
+
     for ip in details.get("ip_addresses", []):
         if not isinstance(ip, dict) or not ip.get("interface") or not ip.get("address"):
             continue
+
         addresses_by_interface.setdefault(str(ip["interface"]), []).append(
             str(ip["address"])
         )
 
     assigned_addresses: set[str] = set()
     nodes = []
+
     for interface in details.get("interfaces", []):
         if not isinstance(interface, dict):
             continue
+
         interface_name = str(interface.get("name") or "—")
         children: list[dict[str, Any]] = []
         connected_device = interface.get("connected_device")
         connected_interface = interface.get("connected_interface")
+
         if connected_device or connected_interface:
             target = ":".join(
                 str(value) for value in (connected_device, connected_interface) if value
             )
             children.append({"type": "connection", "name": target, "children": []})
+
         for address in addresses_by_interface.get(interface_name, []):
             assigned_addresses.add(address)
             children.append({"type": "ip", "name": address, "children": []})
+
         nodes.append(
             {
                 "type": "interface",
@@ -351,19 +402,24 @@ def _interface_nodes(
                 "children": children,
             }
         )
+
     return nodes, assigned_addresses
 
 
 def _component_nodes(details: dict[str, Any]) -> list[dict[str, Any]]:
     groups = []
     components = details.get("components")
+
     if not isinstance(components, dict):
         return groups
+
     for component_type, items in components.items():
         item_nodes = []
+
         for item in items if isinstance(items, list) else []:
             if not isinstance(item, dict):
                 continue
+
             connections = [
                 {
                     "type": "connection",
@@ -384,6 +440,7 @@ def _component_nodes(details: dict[str, Any]) -> list[dict[str, Any]]:
                     "children": connections,
                 }
             )
+
         if item_nodes:
             groups.append(
                 {
@@ -392,4 +449,5 @@ def _component_nodes(details: dict[str, Any]) -> list[dict[str, Any]]:
                     "children": item_nodes,
                 }
             )
+
     return groups

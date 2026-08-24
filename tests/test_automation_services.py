@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import requests
 
 from netbox_cli.client import NetBoxClientError
 from netbox_cli.client.netbox_client import NetBoxClient
@@ -11,6 +12,7 @@ from netbox_cli.config import ConfigurationError, ConfigStore, Settings
 from typer.testing import CliRunner
 
 from netbox_cli.app import app
+from netbox_cli import __version__
 from netbox_cli.exceptions import NetBoxCLIError
 from netbox_cli.presentation.details import (
     DetailOutputFormat,
@@ -18,6 +20,8 @@ from netbox_cli.presentation.details import (
     render_inventory,
     render_rack,
 )
+from netbox_cli.presentation.table_options import TableOptions, select_columns
+from netbox_cli.schemas.racks import AddRack, UpdateRack
 from netbox_cli.service.devices.devices_service import DevicesService
 from netbox_cli.service.infrastructure_service import InfrastructureService
 from netbox_cli.service.inventory_service import InventoryFilterError, InventoryService
@@ -42,16 +46,20 @@ class FakeClient:
     def get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         self.calls.append(("GET", endpoint, params))
         response = next(self.responses)
+
         if isinstance(response, Exception):
             raise response
+
         return response
 
     def patch(self, endpoint: str, data: dict[str, Any]) -> Any:
         self.calls.append(("PATCH", endpoint, data))
+
         return next(self.responses)
 
     def post(self, endpoint: str, data: dict[str, Any]) -> Any:
         self.calls.append(("POST", endpoint, data))
+
         return next(self.responses)
 
 
@@ -103,6 +111,7 @@ def test_inspect_combines_device_interfaces_and_ips() -> None:
 
 def test_inspect_reports_unknown_device() -> None:
     client = FakeClient([page(), page()])
+
     with pytest.raises(ResourceNotFoundError, match="não encontrado"):
         DevicesService(client).inspect("missing")  # type: ignore[arg-type]
 
@@ -297,6 +306,7 @@ def test_inventory_resolves_site_and_normalizes_devices() -> None:
 
 def test_inventory_requires_exactly_one_filter() -> None:
     client = FakeClient([])
+
     with pytest.raises(InventoryFilterError, match="--site ou --rack"):
         InventoryService(client).inventory()  # type: ignore[arg-type]
 
@@ -354,6 +364,62 @@ def test_inventory_csv_has_stable_header(capsys: pytest.CaptureFixture[str]) -> 
     assert "7,Server-01" in csv_output
 
 
+def test_inventory_csv_accepts_column_selection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    render_inventory(
+        {
+            "filter": {"type": "rack", "value": "RACK-04"},
+            "results": [{"id": 7, "name": "Server-01", "rack": "RACK-04"}],
+        },
+        InventoryOutputFormat.csv,
+        table_options=TableOptions(columns=("name", "rack")),
+    )
+
+    assert capsys.readouterr().out == "name,rack\r\nServer-01,RACK-04\r\n"
+
+
+def test_table_columns_adapt_to_terminal_width() -> None:
+    rows = [
+        {
+            "id": 7,
+            "name": "servidor-de-virtualizacao-01",
+            "role": "Servidor de virtualização",
+            "site": "Site Principal",
+            "rack": "Rack-Espelho",
+        }
+    ]
+    available = ("id", "name", "role", "site", "rack")
+
+    narrow = select_columns(
+        rows,
+        available,
+        TableOptions(),
+        terminal_width=50,
+    )
+    wide = select_columns(
+        rows,
+        available,
+        TableOptions(wide=True),
+        terminal_width=50,
+    )
+
+    assert len(narrow) < len(available)
+    assert wide == available
+
+
+def test_inventory_and_devices_help_document_table_options() -> None:
+    runner = CliRunner()
+
+    for command in (["inventory", "--help"], ["devices", "all", "--help"]):
+        result = runner.invoke(app, command)
+
+        assert result.exit_code == 0
+        assert "--wide" in result.stdout
+        assert "--no-truncate" in result.stdout
+        assert "--columns" in result.stdout
+
+
 def test_status_distinguishes_reachable_url_from_invalid_token() -> None:
     client = FakeClient([NetBoxClientError("Invalid token", status_code=403)])
 
@@ -364,6 +430,14 @@ def test_status_distinguishes_reachable_url_from_invalid_token() -> None:
     assert result["reachable"] is True
     assert result["authenticated"] is False
     assert result["status_code"] == 403
+    assert result["cli_version"] == __version__
+
+
+def test_version_option_does_not_require_configuration() -> None:
+    result = CliRunner().invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"netbox-cli {__version__}"
 
 
 def test_login_composes_netbox_v2_token() -> None:
@@ -656,6 +730,36 @@ def test_scoped_rack_uses_site_and_location_ids() -> None:
     }
 
 
+def test_scoped_rack_accepts_numeric_id() -> None:
+    client = FakeClient(
+        [{"id": 4, "name": "Rack-Espelho", "site": {"id": 1}, "location": None}]
+    )
+
+    result = get_scoped_rack(client, "4")  # type: ignore[arg-type]
+
+    assert result["name"] == "Rack-Espelho"
+    assert client.calls == [("GET", "/api/dcim/racks/4/", None)]
+
+
+def test_scoped_rack_validates_scope_when_using_id() -> None:
+    client = FakeClient(
+        [
+            page({"id": 1, "name": "CPTEC"}),
+            {"id": 4, "name": "Rack-Espelho", "site": {"id": 2}},
+        ]
+    )
+
+    with pytest.raises(ResourceNotFoundError, match="não pertence ao site"):
+        get_scoped_rack(client, "4", site_name="CPTEC")  # type: ignore[arg-type]
+
+
+def test_rack_show_help_documents_id_or_name() -> None:
+    result = CliRunner().invoke(app, ["rack", "show", "--help"])
+
+    assert result.exit_code == 0
+    assert "ID ou nome exato do rack" in result.stdout
+
+
 def test_rack_render_uses_starting_unit_and_half_unit(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -765,6 +869,7 @@ def test_rack_create_and_update_forward_location(
         captured["create_service"] = service_class
         captured["create_item"] = item
         captured["create_options"] = kwargs
+
         return {"id": 8, "name": item.name, "location": {"id": item.location}}
 
     def fake_update(
@@ -773,6 +878,7 @@ def test_rack_create_and_update_forward_location(
         captured["update_service"] = service_class
         captured["update_id"] = item_id
         captured["update_item"] = item
+
         return {"id": item_id, "location": {"id": item.location}}
 
     monkeypatch.setattr(racks_cli, "create_resource", fake_create)
@@ -810,6 +916,55 @@ def test_rack_create_and_update_forward_location(
     assert captured["update_service"] is RacksService
     assert captured["update_id"] == 8
     assert captured["update_item"].location == 4
+
+
+def test_rack_create_resolves_location_name_within_site() -> None:
+    client = FakeClient([page({"id": 3, "name": "Sala Teste"})])
+
+    payload = RacksService(client).build_payload(  # type: ignore[arg-type]
+        AddRack(
+            site=2,
+            name="R01",
+            width=19,
+            starting_unit=1,
+            u_height=42,
+            location="Sala Teste",
+        )
+    )
+
+    assert payload["location"] == 3
+    assert client.calls == [
+        (
+            "GET",
+            "/api/dcim/locations/",
+            {"site_id": 2, "q": "Sala Teste", "limit": 0},
+        )
+    ]
+
+
+def test_rack_update_uses_current_site_to_resolve_location_name() -> None:
+    client = FakeClient(
+        [
+            {"id": 8, "name": "R01", "site": {"id": 2}},
+            page({"id": 3, "name": "Sala Teste"}),
+            {"id": 8, "name": "R01", "location": {"id": 3}},
+        ]
+    )
+
+    result = RacksService(client).update(  # type: ignore[arg-type]
+        8, UpdateRack(location="Sala Teste")
+    )
+
+    assert result["location"]["id"] == 3
+    assert client.calls == [
+        ("GET", "/api/dcim/racks/8/", None),
+        (
+            "GET",
+            "/api/dcim/locations/",
+            {"site_id": 2, "q": "Sala Teste", "limit": 0},
+        ),
+        ("PATCH", "/api/dcim/racks/8/", {"location": 3}),
+    ]
 
 
 def test_tree_site_scope_filters_large_resource_collections() -> None:
@@ -876,11 +1031,117 @@ def test_all_commands_request_every_page_by_default(command: str) -> None:
 
 def test_client_rejects_pagination_url_from_another_origin() -> None:
     client = NetBoxClient("https://netbox.local", token="secret")
+
     try:
         with pytest.raises(NetBoxClientError, match="origem inesperada"):
             client.get("https://attacker.invalid/api/dcim/devices/?offset=1000")
     finally:
         client.close()
+
+
+def _http_response(status: int, payload: str = "{}") -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    response._content = payload.encode()
+    response.url = "https://netbox.local/api/dcim/devices/"
+
+    return response
+
+
+def test_client_retries_transient_read_with_exponential_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = NetBoxClient(
+        "https://netbox.local",
+        retries=2,
+        backoff=0.25,
+        verbose=True,
+    )
+    responses: list[requests.Response | Exception] = [
+        requests.ConnectionError("DNS temporariamente indisponível"),
+        requests.Timeout("leitura temporariamente indisponível"),
+        _http_response(200, '{"count": 0, "results": []}'),
+    ]
+    sleeps: list[float] = []
+
+    def fake_request(**kwargs: Any) -> requests.Response:
+        response = responses.pop(0)
+
+        if isinstance(response, Exception):
+            raise response
+
+        return response
+
+    monkeypatch.setattr(client.session, "request", fake_request)
+    monkeypatch.setattr("netbox_cli.client.netbox_client.time.sleep", sleeps.append)
+
+    try:
+        result = client.get("/api/dcim/devices/")
+    finally:
+        client.close()
+
+    assert result["count"] == 0
+    assert sleeps == [0.25, 0.5]
+    assert not responses
+
+
+def test_client_final_connection_error_contains_diagnostic_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = NetBoxClient(
+        "https://netbox.local",
+        timeout=3,
+        retries=1,
+        backoff=0,
+    )
+    calls = 0
+
+    def fail_request(**kwargs: Any) -> requests.Response:
+        nonlocal calls
+        calls += 1
+        raise requests.ConnectionError("Name or service not known")
+
+    monkeypatch.setattr(client.session, "request", fail_request)
+
+    try:
+        with pytest.raises(NetBoxClientError) as exit_info:
+            client.get("/api/dcim/devices/")
+    finally:
+        client.close()
+
+    message = str(exit_info.value)
+    assert "Método: GET" in message
+    assert "Endpoint: /api/dcim/devices/" in message
+    assert "Timeout por tentativa: 3s" in message
+    assert "Tentativas realizadas: 2" in message
+    assert "ConnectionError: Name or service not known" in message
+    assert calls == 2
+
+
+def test_client_does_not_retry_mutating_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = NetBoxClient(
+        "https://netbox.local",
+        retries=3,
+        backoff=0,
+    )
+    calls = 0
+
+    def fail_request(**kwargs: Any) -> requests.Response:
+        nonlocal calls
+        calls += 1
+        raise requests.Timeout("read timed out")
+
+    monkeypatch.setattr(client.session, "request", fail_request)
+
+    try:
+        with pytest.raises(NetBoxClientError, match="Tentativas realizadas: 1"):
+            client.post("/api/dcim/devices/", {"name": "server-01"})
+    finally:
+        client.close()
+
+    assert calls == 1
 
 
 def test_config_treats_null_token_as_empty() -> None:
@@ -932,6 +1193,7 @@ def test_manual_url_change_invalidates_token_before_use(tmp_path: Path) -> None:
     assert settings.url == "https://netbox-b.local"
     assert settings.token == ""
     assert settings.token_url == ""
+
     with pytest.raises(ConfigurationError, match="Token não configurado"):
         store.load(require_token=True)
 

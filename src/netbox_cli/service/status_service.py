@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from netbox_cli import __version__
 from netbox_cli.client import NetBoxClient, NetBoxClientError
 from netbox_cli.service.auth_service import (
     AuthenticationError,
@@ -23,6 +24,7 @@ class UserDetails(TypedDict):
 
 
 class StatusResult(TypedDict, total=False):
+    cli_version: str
     url: str
     endpoint: str
     reachable: bool
@@ -53,6 +55,7 @@ class StatusService:
 
     def check(self) -> StatusResult:
         result: StatusResult = {
+            "cli_version": __version__,
             "url": self.url,
             "endpoint": f"{self.url.rstrip('/')}/api/authentication-check/",
             "reachable": False,
@@ -64,6 +67,7 @@ class StatusService:
             "user": None,
             "user_details": None,
         }
+
         try:
             user = AuthService(self.client).validate()
         except NetBoxClientError as error:
@@ -79,6 +83,7 @@ class StatusService:
             result["authenticated"] = True
             result["user"] = user.get("username") or user.get("display")
             result["user_details"] = _user_details(user)
+
             try:
                 AuthService(self.client).require_superuser()
             except SuperuserRequiredError as error:
@@ -89,6 +94,7 @@ class StatusService:
             else:
                 result["superuser"] = True
                 result["authorized"] = True
+
         return result
 
 
@@ -97,6 +103,7 @@ def _user_details(user: dict[str, Any]) -> UserDetails:
     last_name = str(user.get("last_name") or "").strip()
     full_name = " ".join(part for part in (first_name, last_name) if part)
     groups = _related_names(user.get("groups"))
+
     return {
         "id": user.get("id"),
         "username": user.get("username"),
@@ -113,12 +120,16 @@ def _user_details(user: dict[str, Any]) -> UserDetails:
 def _related_names(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
+
     names: list[str] = []
+
     for item in value:
         if isinstance(item, dict):
             name = item.get("name") or item.get("display")
         else:
             name = item
+
         if name is not None:
             names.append(str(name))
+
     return names

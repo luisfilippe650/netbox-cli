@@ -44,20 +44,24 @@ class DeviceInspectionService:
             params={"device_id": device_id, "limit": 0},
         )
         components = self._components(device, device_id)
+
         return _inspection_result(device, interfaces, ip_addresses, components)
 
     def _components(
         self, device: dict[str, Any], device_id: int
     ) -> dict[str, list[dict[str, Any]]]:
         components: dict[str, list[dict[str, Any]]] = {}
+
         for name, (count_field, endpoint) in self.COMPONENT_ENDPOINTS.items():
             if not device.get(count_field):
                 components[name] = []
                 continue
+
             items = get_all_results(
                 self.client, endpoint, params={"device_id": device_id, "limit": 0}
             )
             components[name] = [_normalize_component(item) for item in items]
+
         return components
 
 
@@ -106,9 +110,11 @@ def _normalize_interface(interface: dict[str, Any]) -> dict[str, Any]:
     endpoint = endpoints[0] if isinstance(endpoints, list) and endpoints else None
     connected_device = None
     connected_interface = None
+
     if isinstance(endpoint, dict):
         connected_device = nested_value(endpoint.get("device"), "name")
         connected_interface = endpoint.get("name") or endpoint.get("display")
+
     return {
         "name": interface.get("name") or interface.get("display"),
         "label": interface.get("label"),
@@ -131,6 +137,7 @@ def _normalize_ip(ip_address: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_component(item: dict[str, Any]) -> dict[str, Any]:
     endpoints = item.get("connected_endpoints") or item.get("link_peers") or []
+
     return {
         "id": item.get("id"),
         "name": item.get("name") or item.get("display"),
@@ -159,4 +166,5 @@ def _manufacturer(device_type: Any) -> Any:
 def _ip(value: Any) -> Any:
     if isinstance(value, dict):
         return value.get("address") or value.get("display")
+
     return value

@@ -17,7 +17,7 @@ from netbox_cli.service.racks import RackGroupsService
 app = typer.Typer(help="Gerencia grupos de racks.", no_args_is_help=True)
 
 
-@app.command("post")
+@app.command("create")
 def post_rack_group(
     ctx: typer.Context,
     name: Annotated[str, typer.Option("--name", "-n", help="Nome do grupo.")],
@@ -56,7 +56,7 @@ def get_rack_group(
     )
 
 
-@app.command("all")
+@app.command("list")
 def all_rack_groups(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
     limit: Annotated[int | None, typer.Option(min=0)] = 0,
@@ -68,6 +68,10 @@ def all_rack_groups(
         output=output,
         title="Grupos de racks",
     )
+
+
+app.command("post", hidden=True)(post_rack_group)
+app.command("all", hidden=True)(all_rack_groups)
 
 
 @app.command("update")

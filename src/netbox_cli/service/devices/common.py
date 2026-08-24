@@ -16,6 +16,7 @@ def get_device(
     site_name: str | None = None,
 ) -> dict[str, Any]:
     filters = None
+
     if site_name:
         site = get_by_name(
             client,
@@ -24,6 +25,7 @@ def get_device(
             resource_label="Site",
         )
         filters = {"site_id": site["id"]}
+
     return get_by_name(
         client,
         DEVICES_ENDPOINT,
@@ -36,4 +38,5 @@ def get_device(
 def nested_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key) or value.get("display") or value.get("value")
+
     return value

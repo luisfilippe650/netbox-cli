@@ -8,18 +8,21 @@ from netbox_cli.cli.common import (
     execute,
     explicit_update_fields,
     make_service,
+    update_resource,
 )
 from netbox_cli.presentation.output import OutputFormat
-from netbox_cli.schemas.devices import AddDeviceType
+from netbox_cli.schemas.devices import AddDeviceType, UpdateDeviceType
 from netbox_cli.service.devices import DeviceTypesService
 
 app = typer.Typer(help="Gerencia tipos de dispositivos.", no_args_is_help=True)
 
 
-@app.command("post")
+@app.command("create")
 def post_device_type(
     ctx: typer.Context,
-    manufacturer: Annotated[int, typer.Option("--manufacturer", min=1)],
+    manufacturer: Annotated[
+        str, typer.Option("--manufacturer", help="ID, nome ou slug do fabricante.")
+    ],
     model: Annotated[str, typer.Option("--model")],
     u_height: Annotated[float, typer.Option("--u-height", min=0)],
     ensure: Annotated[
@@ -65,7 +68,7 @@ def get_device_type(
     )
 
 
-@app.command("all")
+@app.command("list")
 def all_device_types(
     search: Annotated[str | None, typer.Option("--search", "-s")] = None,
     limit: Annotated[int | None, typer.Option(min=0)] = 0,
@@ -79,7 +82,37 @@ def all_device_types(
     )
 
 
-app.command("list", hidden=True)(all_device_types)
+app.command("post", hidden=True)(post_device_type)
+app.command("all", hidden=True)(all_device_types)
+
+
+@app.command("update")
+def update_device_type(
+    device_type_id: Annotated[int, typer.Argument(min=1)],
+    manufacturer: Annotated[
+        str | None,
+        typer.Option("--manufacturer", help="ID, nome ou slug do fabricante."),
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    u_height: Annotated[float | None, typer.Option("--u-height", min=0)] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+) -> None:
+    """Atualiza somente os campos informados de um tipo de dispositivo."""
+    execute(
+        lambda: update_resource(
+            DeviceTypesService,
+            device_type_id,
+            UpdateDeviceType(
+                manufacturer=manufacturer,
+                model=model,
+                u_height=u_height,
+            ),
+            dry_run=dry_run,
+        ),
+        output=output,
+        title="Tipo de dispositivo atualizado",
+    )
 
 
 @app.command("delete")

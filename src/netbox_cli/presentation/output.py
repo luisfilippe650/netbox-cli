@@ -8,12 +8,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from netbox_cli.presentation.table_options import TableOptions, select_columns
 from netbox_cli.runtime import current_options
 
 
 class OutputFormat(str, Enum):
     json = "json"
     table = "table"
+    id = "id"
 
 
 console = Console()
@@ -24,10 +26,22 @@ def is_json_output(output: Enum | str) -> bool:
     """Verifica se a saída efetiva é JSON, respeitando a opção global."""
 
     global_output = current_options().output
+
     if global_output is not None:
         return global_output == "json"
+
     value = output.value if isinstance(output, Enum) else str(output)
+
     return value == "json"
+
+
+def _effective_output(output: OutputFormat) -> str:
+    global_output = current_options().output
+
+    if global_output == "human":
+        return OutputFormat.table.value
+
+    return global_output or output.value
 
 
 def _display_value(value: Any) -> str:
@@ -35,10 +49,13 @@ def _display_value(value: Any) -> str:
 
     if value is None:
         return ""
+
     if isinstance(value, dict):
         return str(value.get("display") or value.get("name") or value.get("id") or "")
+
     if isinstance(value, list):
         return ", ".join(_display_value(item) for item in value)
+
     return str(value)
 
 
@@ -56,7 +73,44 @@ def render_json(data: Any) -> None:
     )
 
 
-def render_table(data: Any, *, title: str) -> None:
+def resource_id(data: Any) -> int | str | None:
+    """Extrai o ID de respostas diretas ou de envelopes do ``--ensure``."""
+    if not isinstance(data, dict):
+        return None
+
+    if data.get("id") is not None:
+        return data["id"]
+
+    for field in ("resource", "current"):
+        nested = data.get(field)
+
+        if isinstance(nested, dict) and nested.get("id") is not None:
+            return nested["id"]
+
+    return None
+
+
+def render_id(data: Any) -> None:
+    """Escreve somente o ID, facilitando substituição de comando em scripts."""
+    identifier = resource_id(data)
+
+    if identifier is None:
+        error_console.print(
+            "[red]A operação não retornou um ID. "
+            "Em um dry-run de criação, o recurso ainda não existe.[/red]"
+        )
+
+        raise typer.Exit(code=1)
+
+    typer.echo(identifier)
+
+
+def render_table(
+    data: Any,
+    *,
+    title: str,
+    table_options: TableOptions | None = None,
+) -> None:
     """Exibe dados em uma tabela Rich com as colunas mais relevantes."""
 
     rows = (
@@ -68,23 +122,24 @@ def render_table(data: Any, *, title: str) -> None:
 
     if not rows:
         console.print(f"[yellow]Nenhum {title.lower()} encontrado.[/yellow]")
+
         return
 
     preferred = (
         "id",
         "name",
+        "role",
+        "device_type",
+        "site",
+        "rack",
+        "status",
+        "location",
         "manufacturer",
         "model",
         "slug",
-        "status",
-        "site",
-        "location",
         "group",
-        "role",
-        "device_type",
         "rack_type",
         "serial",
-        "rack",
         "position",
         "width",
         "starting_unit",
@@ -93,22 +148,48 @@ def render_table(data: Any, *, title: str) -> None:
         "parent",
         "description",
     )
-    columns = [column for column in preferred if any(column in row for row in rows)]
-    if not columns:
-        columns = list(rows[0])[:8]
+    available = [column for column in preferred if any(column in row for row in rows)]
+
+    if not available:
+        available = list(rows[0])[:8]
+
+    options = table_options or TableOptions()
+    columns = select_columns(
+        rows,
+        available,
+        options,
+        terminal_width=console.width,
+        display=_display_value,
+    )
 
     table = Table(title=title, show_lines=False)
+
     for column in columns:
-        table.add_column(column.upper(), no_wrap=column == "id")
+        table.add_column(
+            column.upper(),
+            no_wrap=column == "id",
+            overflow="fold" if options.no_truncate else "ellipsis",
+        )
+
     for row in rows:
         table.add_row(*(_display_value(row.get(column)) for column in columns))
+
     console.print(table)
 
 
-def render(data: Any, output: OutputFormat, *, title: str) -> None:
-    """Encaminha os dados para o renderizador JSON ou de tabela."""
+def render(
+    data: Any,
+    output: OutputFormat,
+    *,
+    title: str,
+    table_options: TableOptions | None = None,
+) -> None:
+    """Encaminha os dados para o renderizador JSON, tabela ou ID."""
+    effective_output = _effective_output(output)
 
-    if is_json_output(output):
+    if effective_output == OutputFormat.json.value:
         render_json(data)
+    elif effective_output == OutputFormat.id.value:
+        render_id(data)
     else:
-        render_table(data, title=title)
+        render_table(data, title=title, table_options=table_options)

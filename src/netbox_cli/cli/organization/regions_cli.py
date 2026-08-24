@@ -8,9 +8,10 @@ from netbox_cli.cli.common import (
     execute,
     explicit_update_fields,
     make_service,
+    update_resource,
 )
 from netbox_cli.presentation.output import OutputFormat
-from netbox_cli.schemas.organization.regions_dto import AddRegion
+from netbox_cli.schemas.organization.regions_dto import AddRegion, UpdateRegion
 from netbox_cli.service.organization.regions_service import RegionsService
 
 app = typer.Typer(help="Gerencia regiões do NetBox.", no_args_is_help=True)
@@ -46,11 +47,11 @@ def post_region(
     )
 
 
-app.command("post", help="Cria uma região.")(post_region)
-app.command("create", hidden=True)(post_region)
+app.command("create", help="Cria uma região.")(post_region)
+app.command("post", hidden=True)(post_region)
 
 
-@app.command("view")
+@app.command("get")
 def view_region(
     region_id: Annotated[int, typer.Argument(min=1)],
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
@@ -61,6 +62,9 @@ def view_region(
         output=output,
         title="Região",
     )
+
+
+app.command("view", hidden=True)(view_region)
 
 
 @app.command("list")
@@ -74,6 +78,28 @@ def list_regions(
         lambda: make_service(RegionsService).list(search=search, limit=limit),
         output=output,
         title="Regiões",
+    )
+
+
+@app.command("update")
+def update_region(
+    region_id: Annotated[int, typer.Argument(min=1)],
+    name: Annotated[str | None, typer.Option("--name", "-n")] = None,
+    slug: Annotated[str | None, typer.Option("--slug")] = None,
+    description: Annotated[str | None, typer.Option("--description", "-d")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+) -> None:
+    """Atualiza somente os campos informados de uma região."""
+    execute(
+        lambda: update_resource(
+            RegionsService,
+            region_id,
+            UpdateRegion(name=name, slug=slug, description=description),
+            dry_run=dry_run,
+        ),
+        output=output,
+        title="Região atualizada",
     )
 
 

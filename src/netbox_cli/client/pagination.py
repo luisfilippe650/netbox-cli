@@ -22,9 +22,12 @@ class PaginationError(NetBoxCLIError):
 def get_result_list(response: Any) -> list[dict[str, Any]]:
     if not isinstance(response, dict):
         return []
+
     results = response.get("results", [])
+
     if not isinstance(results, list):
         return []
+
     return [item for item in results if isinstance(item, dict)]
 
 
@@ -41,10 +44,12 @@ def get_all_results(
 
     while isinstance(response, dict) and response.get("next"):
         next_url = response["next"]
+
         if not isinstance(next_url, str) or next_url in visited:
             raise PaginationError(
                 "O NetBox retornou uma paginação inválida ou cíclica."
             )
+
         visited.add(next_url)
         response = client.get(next_url)
         results.extend(get_result_list(response))

@@ -9,10 +9,11 @@ from netbox_cli.cli.common import (
     execute_operation,
     explicit_update_fields,
     make_service,
+    update_resource,
 )
 from netbox_cli.presentation.details import DetailOutputFormat, render_site_status
 from netbox_cli.presentation.output import OutputFormat
-from netbox_cli.schemas.organization.sites_dto import AddSite
+from netbox_cli.schemas.organization.sites_dto import AddSite, UpdateSite
 from netbox_cli.service.organization.sites_service import SitesService
 
 app = typer.Typer(help="Gerencia sites do NetBox.", no_args_is_help=True)
@@ -24,7 +25,7 @@ def post_site(
     slug: Annotated[str | None, typer.Option()] = None,
     status: Annotated[str, typer.Option()] = "active",
     region: Annotated[
-        int | None, typer.Option("--region", help="ID da região.", min=1)
+        str | None, typer.Option("--region", help="ID, nome ou slug da região.")
     ] = None,
     description: Annotated[str, typer.Option("--description", "-d")] = "",
     ensure: Annotated[
@@ -57,11 +58,11 @@ def post_site(
     )
 
 
-app.command("post")(post_site)
-app.command("create", hidden=True)(post_site)
+app.command("create")(post_site)
+app.command("post", hidden=True)(post_site)
 
 
-@app.command("view")
+@app.command("get")
 def view_site(
     site_id: Annotated[int, typer.Argument(min=1)],
     output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
@@ -70,6 +71,9 @@ def view_site(
     execute(
         lambda: make_service(SitesService).get(site_id), output=output, title="Site"
     )
+
+
+app.command("view", hidden=True)(view_site)
 
 
 @app.command("list")
@@ -83,6 +87,38 @@ def list_sites(
         lambda: make_service(SitesService).list(search=search, limit=limit),
         output=output,
         title="Sites",
+    )
+
+
+@app.command("update")
+def update_site(
+    site_id: Annotated[int, typer.Argument(min=1)],
+    name: Annotated[str | None, typer.Option("--name", "-n")] = None,
+    slug: Annotated[str | None, typer.Option("--slug")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    region: Annotated[
+        str | None, typer.Option("--region", help="ID, nome ou slug da região.")
+    ] = None,
+    description: Annotated[str | None, typer.Option("--description", "-d")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o")] = OutputFormat.json,
+) -> None:
+    """Atualiza somente os campos informados de um site."""
+    execute(
+        lambda: update_resource(
+            SitesService,
+            site_id,
+            UpdateSite(
+                name=name,
+                slug=slug,
+                status=status,
+                region=region,
+                description=description,
+            ),
+            dry_run=dry_run,
+        ),
+        output=output,
+        title="Site atualizado",
     )
 
 
