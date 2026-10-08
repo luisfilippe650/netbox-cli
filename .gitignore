@@ -30,3 +30,7 @@ dist/
 .vscode/
 *~
 .DS_Store
+
+# Documentação Zensical: site gerado e cache local
+/site/
+/.cache/

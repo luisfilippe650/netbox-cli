@@ -1,0 +1,39 @@
+[project]
+site_name = "netbox-cli"
+site_description = "Inventário NetBox pelo terminal / NetBox inventory from your terminal"
+site_author = "Luis Filippe Reis Nogueira"
+repo_url = "https://github.com/luisfilippe650/netbox-cli"
+repo_name = "luisfilippe650/netbox-cli"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+  { "English" = [
+    { "Home" = "index.md" },
+    { "About the project" = "about.md" },
+    { "Getting started" = "getting-started.md" },
+    { "Configuration and output" = "configuration.md" },
+    { "Queries and connections" = "operations.md" },
+    { "Resource reference" = "reference.md" },
+    { "Automation and AI" = "automation.md" },
+  ] },
+  { "Português" = [
+    { "Início" = "pt/index.md" },
+    { "Sobre o projeto" = "pt/about.md" },
+    { "Primeiros passos" = "pt/getting-started.md" },
+    { "Configuração e saída" = "pt/configuration.md" },
+    { "Consultas e conexões" = "pt/operations.md" },
+    { "Referência de recursos" = "pt/reference.md" },
+    { "Automação e IA" = "pt/automation.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+features = ["content.code.copy", "navigation.footer", "navigation.top"]
+
+
+[project.extra]
+alternate = [
+  { name = "English", link = "/", lang = "en" },
+  { name = "Português", link = "/pt/", lang = "pt" },
+]
